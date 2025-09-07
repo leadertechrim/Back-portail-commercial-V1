@@ -8,9 +8,6 @@ LABEL fly_launch_runtime="flask"
 
 WORKDIR /code
 
-COPY requirements.txt requirements.txt
-COPY model_features.json model_features.json
-COPY predictive_model.joblib predictive_model.joblib
 
 RUN pip3 install -r requirements.txt
 
