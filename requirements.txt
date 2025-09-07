@@ -1,2 +1,2 @@
-flask
-pymongo
+flask=3.1.2
+pymongo = 4.14.1
