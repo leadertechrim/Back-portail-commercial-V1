@@ -1,6 +1,15 @@
-:root {
+/* :root {
   --primary-color: #004d99;
   --secondary-color: #3385ff;
+  --background-color: #f0f2f5;
+  --card-background: #ffffff;
+  --text-color: #333;
+  --border-color: #e0e0e0;
+} */
+
+:root {
+  --primary-color: #f67800;
+  --secondary-color: #df7008;
   --background-color: #f0f2f5;
   --card-background: #ffffff;
   --text-color: #333;

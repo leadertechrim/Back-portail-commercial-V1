@@ -1,18 +1,14 @@
-# syntax=docker/dockerfile:1
+FROM python:3.13-slim
 
-ARG PYTHON_VERSION=3.13.5
+WORKDIR /app
 
-FROM python:${PYTHON_VERSION}-slim
+# Copier requirements.txt d'abord
+COPY requirements.txt .
 
-LABEL fly_launch_runtime="flask"
+# Installer les dépendances
+RUN pip install --no-cache-dir -r requirements.txt
 
-WORKDIR /code
-
-
-RUN pip install -r requirements.txt
-
+# Copier le reste du code
 COPY . .
 
-EXPOSE 8080
-
-CMD [ "python3", "-m" , "flask", "run", "--host=0.0.0.0", "--port=8080"]
+CMD ["python", "app.py"]
