@@ -1,0 +1,21 @@
+# syntax=docker/dockerfile:1
+
+ARG PYTHON_VERSION=3.13.5
+
+FROM python:${PYTHON_VERSION}-slim
+
+LABEL fly_launch_runtime="flask"
+
+WORKDIR /code
+
+COPY requirements.txt requirements.txt
+COPY model_features.json model_features.json
+COPY predictive_model.joblib predictive_model.joblib
+
+RUN pip3 install -r requirements.txt
+
+COPY . .
+
+EXPOSE 8080
+
+CMD [ "python3", "-m" , "flask", "run", "--host=0.0.0.0", "--port=8080"]
