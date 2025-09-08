@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, jsonify
 from pymongo import MongoClient
-
+import os
 app = Flask(__name__)
 
 # Chaîne de connexion MongoDB Atlas (directement intégrée)
@@ -16,12 +16,30 @@ def home():
     sources = list(collection.find({}).sort("nom_entite", 1))
     return render_template('index.html', sources=sources)
 
+# @app.route('/recherche', methods=['GET'])
+# def recherche():
+#     """Route pour la recherche dynamique via JavaScript."""
+#     query_param = request.args.get('q', '')
+#     if query_param:
+#         # Recherche insensible à la casse dans les noms et les catégories
+#         results = list(collection.find(
+#             {"$or": [
+#                 {"nom_entite": {"$regex": query_param, "$options": "i"}},
+#                 {"categorie": {"$regex": query_param, "$options": "i"}}
+#             ]}
+#         ))
+#     else:
+#         # Retourne une liste vide si la requête est vide
+#         results = []
+    
+#     return jsonify(results)
+
 @app.route('/recherche', methods=['GET'])
 def recherche():
     """Route pour la recherche dynamique via JavaScript."""
     query_param = request.args.get('q', '')
     if query_param:
-        # Recherche insensible à la casse dans les noms et les catégories
+        # Recherche insensible à la casse
         results = list(collection.find(
             {"$or": [
                 {"nom_entite": {"$regex": query_param, "$options": "i"}},
@@ -29,10 +47,18 @@ def recherche():
             ]}
         ))
     else:
-        # Retourne une liste vide si la requête est vide
         results = []
-    
-    return jsonify(results)
+
+    # Conversion des ObjectId en chaînes de caractères
+    # C'est la ligne de code cruciale pour corriger l'erreur
+    sanitized_results = []
+    for result in results:
+        # Convertit l'ObjectId en string pour qu'il soit sérialisable en JSON
+        result['_id'] = str(result['_id'])
+        sanitized_results.append(result)
+
+    return jsonify(sanitized_results)
+
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # Railway donne le PORT automatiquement
-    app.run(host="0.0.0.0", port=port)
+    app.run(debug=True, host='127.0.0.1', port=8000)

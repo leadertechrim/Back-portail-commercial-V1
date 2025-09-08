@@ -82,7 +82,7 @@ body {
 }
 
 #searchButton:hover {
-  background-color: #2a75e0;
+  background-color: #f68700;
 }
 
 .main-content {
@@ -202,3 +202,20 @@ h2 {
     margin-left: 10px;
   }
 }
+
+/* .logo {
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+} */
+
+.logo-img {
+  height: 40px; /* ajuste selon ton besoin */
+  margin-right: 30px;
+}
+/* 
+.logo-text {
+  font-size: 1.2rem;
+  font-weight: bold;
+  color: #333;
+} */

@@ -17,6 +17,11 @@
     <header class="header">
       <div class="header-content">
         <a href="/" class="logo">
+          <img
+            src="{{ url_for('static', filename='images/logo.png') }}"
+            alt="Logo"
+            class="logo-img"
+          />
           <i class="fas fa-gavel"></i>
           <span class="logo-text">Appels d'Offres</span>
         </a>
@@ -43,7 +48,7 @@
       </section>
 
       <section class="tools-section">
-        <h2>Fonctionnalités Clés</h2>
+        <!-- <h2>Fonctionnalités Clés</h2> -->
         <div class="tool-cards">
           <div class="tool-card">
             <i class="fas fa-shopping-basket tool-icon"></i>
