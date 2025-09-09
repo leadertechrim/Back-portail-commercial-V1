@@ -1,64 +1,119 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from flask_bcrypt import Bcrypt
 from pymongo import MongoClient
-import os
-app = Flask(__name__)
+import jwt
+from datetime import datetime, timedelta
+from bson.objectid import ObjectId
 
-# Chaîne de connexion MongoDB Atlas (directement intégrée)
-# Note : Pour une sécurité accrue en production, il est recommandé d'utiliser des variables d'environnement.
-MONGO_URI = "mongodb+srv://Emama:N8F7kSlWoJpZ0bIk@cluster0.1czao7m.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+app = Flask(__name__)
+CORS(app)
+bcrypt = Bcrypt(app)
+
+app.config["SECRET_KEY"] = "SECRET_SUPER_CLE_CHANGE_LA"
+
+# MongoDB
+MONGO_URI = "mongodb+srv://Emama:N8F7kSlWoJpZ0bIk@cluster0.1czao7m.mongodb.net/?retryWrites=true&w=majority"
 client = MongoClient(MONGO_URI)
 db = client.appels_doffres_db
-collection = db.appels_doffres_sources
+sources_col = db.appels_doffres_sources
+users_col = db.users
 
-@app.route('/')
-def home():
-    """Route pour la page d'accueil. Affiche toutes les sources d'appels d'offres."""
-    sources = list(collection.find({}).sort("nom_entite", 1))
-    return render_template('index.html', sources=sources)
+# Routes sources
+@app.route("/api/sources", methods=["GET"])
+def get_sources():
+    sources = list(sources_col.find({}).sort("nom_entite", 1))
+    for s in sources:
+        s["_id"] = str(s["_id"])
+        s["nom_entite"] = str(s.get("nom_entite", ""))
+        s["categorie"] = str(s.get("categorie", ""))
+        s["url"] = str(s.get("url", ""))
+    return jsonify(sources)
 
-# @app.route('/recherche', methods=['GET'])
-# def recherche():
-#     """Route pour la recherche dynamique via JavaScript."""
-#     query_param = request.args.get('q', '')
-#     if query_param:
-#         # Recherche insensible à la casse dans les noms et les catégories
-#         results = list(collection.find(
-#             {"$or": [
-#                 {"nom_entite": {"$regex": query_param, "$options": "i"}},
-#                 {"categorie": {"$regex": query_param, "$options": "i"}}
-#             ]}
-#         ))
-#     else:
-#         # Retourne une liste vide si la requête est vide
-#         results = []
-    
-#     return jsonify(results)
-
-@app.route('/recherche', methods=['GET'])
+@app.route("/api/recherche", methods=["GET"])
 def recherche():
-    """Route pour la recherche dynamique via JavaScript."""
-    query_param = request.args.get('q', '')
-    if query_param:
-        # Recherche insensible à la casse
-        results = list(collection.find(
-            {"$or": [
-                {"nom_entite": {"$regex": query_param, "$options": "i"}},
-                {"categorie": {"$regex": query_param, "$options": "i"}}
-            ]}
-        ))
+    q = request.args.get("q", "")
+    results = list(sources_col.find({
+        "$or": [
+            {"nom_entite": {"$regex": q, "$options": "i"}},
+            {"categorie": {"$regex": q, "$options": "i"}}
+        ]
+    }))
+    for r in results:
+        r["_id"] = str(r["_id"])
+        r["nom_entite"] = str(r.get("nom_entite", ""))
+        r["categorie"] = str(r.get("categorie", ""))
+        r["url"] = str(r.get("url", ""))
+    return jsonify(results)
+
+# Routes Auth
+@app.route("/register", methods=["POST"])
+def register():
+    data = request.get_json()
+    email = data.get("email")
+    password = data.get("password")
+    name = data.get("name")
+    role = data.get("role", "user")
+
+    if users_col.find_one({"email": email}):
+        return jsonify({"message": "Utilisateur déjà existant"}), 400
+
+    hashed = bcrypt.generate_password_hash(password).decode("utf-8")
+    user = {"email": email, "password": hashed, "name": name, "role": role}
+    users_col.insert_one(user)
+    return jsonify({"message": "Utilisateur créé"}), 201
+
+@app.route("/login", methods=["POST"])
+def login():
+    data = request.get_json()
+    email = data.get("email")
+    password = data.get("password")
+    user = users_col.find_one({"email": email})
+    if not user:
+        return jsonify({"message": "Utilisateur non trouvé"}), 404
+
+    if bcrypt.check_password_hash(user["password"], password):
+        token = jwt.encode({
+            "user_id": str(user["_id"]),
+            "role": user.get("role", "user"),
+            "exp": datetime.utcnow() + timedelta(hours=6)
+        }, app.config["SECRET_KEY"], algorithm="HS256")
+        return jsonify({"token": token, "role": user.get("role", "user"), "name": user.get("name")})
     else:
-        results = []
+        return jsonify({"message": "Mot de passe incorrect"}), 401
 
-    # Conversion des ObjectId en chaînes de caractères
-    # C'est la ligne de code cruciale pour corriger l'erreur
-    sanitized_results = []
-    for result in results:
-        # Convertit l'ObjectId en string pour qu'il soit sérialisable en JSON
-        result['_id'] = str(result['_id'])
-        sanitized_results.append(result)
+# Ajouter source (admin)
 
-    return jsonify(sanitized_results)
 
+@app.route("/api/sources", methods=["POST"])
+def add_source():
+    auth = request.headers.get("Authorization")
+    if not auth:
+        return jsonify({"message": "Token manquant"}), 401
+    try:
+        token = auth.split(" ")[1]
+        decoded = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+    except:
+        return jsonify({"message": "Token invalide"}), 401
+    if decoded.get("role") != "admin":
+        return jsonify({"message": "Accès refusé"}), 403
+
+    data = request.get_json()
+    if not all([data.get("nom_entite"), data.get("url"), data.get("categorie")]):
+        return jsonify({"message": "Champs manquants"}), 400
+    sources_col.insert_one(data)
+    return jsonify({"message": "Source ajoutée"}), 201
 
 if __name__ == "__main__":
-    app.run(debug=True, host='127.0.0.1', port=8000)
+    app.run(debug=True, host="127.0.0.1", port=8000)
+
+
+# from bcrypt import hashpw, gensalt
+
+# password = "admin123"  # mot de passe en clair
+# hashed = hashpw(password.encode('utf-8'), gensalt())
+# print(hashed.decode())  # tu obtiens la version cryptée à mettre dans MongoDB
+
+# password_user = "user123"
+# hashed_user = hashpw(password_user.encode('utf-8'), gensalt())
+# print(hashed_user.decode())
