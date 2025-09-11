@@ -62,15 +62,19 @@ bcrypt = Bcrypt(app)
 
 # config
 JWT_SECRET = os.getenv("JWT_SECRET", "CHANGE_ME_IN_PROD")
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
 DB_NAME = os.getenv("DB_NAME", "appels_doffres_db")
 TOKEN_EXP_HOURS = int(os.getenv("TOKEN_EXP_HOURS", "6"))
+MONGO_URI = "mongodb+srv://Emama:N8F7kSlWoJpZ0bIk@cluster0.1czao7m.mongodb.net/?retryWrites=true&w=majority"
 
 client = MongoClient(MONGO_URI)
 db = client[DB_NAME]
 sources_col = db["appels_doffres_sources"]
 users_col = db["users"]
+docs = db["appels_doffres_sources"].find({})
 
+# Afficher les résultats
+for doc in docs:
+    print(doc)
 # ---------------------------
 # Helpers / Décorateurs
 # ---------------------------
