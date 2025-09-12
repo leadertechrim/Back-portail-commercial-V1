@@ -19,16 +19,7 @@ db = client.appels_doffres_db
 sources_col = db.appels_doffres_sourcess
 users_col = db.users
 
-# Routes sources
-# @app.route("/api/sources", methods=["GET"])
-# def get_sources():
-#     sources = list(sources_col.find({}).sort("nom_entite", 1))
-#     for s in sources:
-#         s["_id"] = str(s["_id"])
-#         s["nom_entite"] = str(s.get("nom_entite", ""))
-#         s["categorie"] = str(s.get("categorie", ""))
-#         s["url"] = str(s.get("url", ""))
-#     return jsonify(sources)
+
 
 @app.route("/api/sources", methods=["GET"])
 def get_sources():
@@ -50,21 +41,7 @@ def get_sources():
                 pass
     return jsonify(sources)
 
-# @app.route("/api/recherche", methods=["GET"])
-# def recherche():
-#     q = request.args.get("q", "")
-#     results = list(sources_col.find({
-#         "$or": [
-#             {"nom_entite": {"$regex": q, "$options": "i"}},
-#             {"categorie": {"$regex": q, "$options": "i"}}
-#         ]
-#     }))
-#     for r in results:
-#         r["_id"] = str(r["_id"])
-#         r["nom_entite"] = str(r.get("nom_entite", ""))
-#         r["categorie"] = str(r.get("categorie", ""))
-#         r["url"] = str(r.get("url", ""))
-#     return jsonify(results)
+
 @app.route("/api/recherche", methods=["GET"])
 def recherche():
     q = request.args.get("q", "")
@@ -166,7 +143,119 @@ def add_source():
     sources_col.insert_one(data)
     return jsonify({"message": "Source ajoutée"}), 201
 
+# Dans votre backend Python, ajoutez cette fonction :
+def reorganize_orders_on_update(categorie, old_order, new_order, entity_id):
+    """Réorganise les ordres lors de la modification"""
+    if new_order == old_order:
+        return  # Pas de changement d'ordre
+    
+    if new_order < old_order:
+        # Décaler vers le haut : les entités entre new_order et old_order-1 montent de +1
+        sources_col.update_many(
+            {
+                "categorie": categorie,
+                "order": {"$gte": new_order, "$lt": old_order},
+                "_id": {"$ne": ObjectId(entity_id)}
+            },
+            {"$inc": {"order": 1}}
+        )
+    else:
+        # Décaler vers le bas : les entités entre old_order+1 et new_order descendent de -1
+        sources_col.update_many(
+            {
+                "categorie": categorie,
+                "order": {"$gt": old_order, "$lte": new_order},
+                "_id": {"$ne": ObjectId(entity_id)}
+            },
+            {"$inc": {"order": -1}}
+        )
 
+# Modifiez votre route PUT :
+@app.route("/api/sources/<source_id>", methods=["PUT"])
+def update_source(source_id):
+    # ... vérifications auth ...
+    
+    data = request.get_json()
+    
+    # Récupérer l'ancienne entité
+    old_entity = sources_col.find_one({"_id": ObjectId(source_id)})
+    if not old_entity:
+        return jsonify({"message": "Entité non trouvée"}), 404
+    
+    old_order = old_entity.get("order", 0)
+    new_order = data.get("order", old_order)
+    old_categorie = old_entity.get("categorie")
+    new_categorie = data.get("categorie")
+    
+    # Si changement de catégorie
+    if old_categorie != new_categorie:
+        # Réorganiser l'ancienne catégorie
+        sources_col.update_many(
+            {
+                "categorie": old_categorie,
+                "order": {"$gt": old_order},
+                "_id": {"$ne": ObjectId(source_id)}
+            },
+            {"$inc": {"order": -1}}
+        )
+        # Réorganiser la nouvelle catégorie
+        sources_col.update_many(
+            {
+                "categorie": new_categorie,
+                "order": {"$gte": new_order},
+                "_id": {"$ne": ObjectId(source_id)}
+            },
+            {"$inc": {"order": 1}}
+        )
+    else:
+        # Même catégorie, réorganiser selon le nouvel ordre
+        reorganize_orders_on_update(new_categorie, old_order, new_order, source_id)
+    
+    # Mettre à jour l'entité
+    sources_col.update_one(
+        {"_id": ObjectId(source_id)},
+        {"$set": data}
+    )
+    return jsonify({"message": "Source mise à jour"}), 200
+# Routes pour modification et suppression
+# @app.route("/api/sources/<source_id>", methods=["PUT"])
+# def update_source(source_id):
+#     auth = request.headers.get("Authorization")
+#     if not auth:
+#         return jsonify({"message": "Token manquant"}), 401
+#     try:
+#         token = auth.split(" ")[1]
+#         decoded = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+#     except:
+#         return jsonify({"message": "Token invalide"}), 401
+#     if decoded.get("role") != "admin":
+#         return jsonify({"message": "Accès refusé"}), 403
+
+#     data = request.get_json()
+#     if not all([data.get("nom_entite"), data.get("url"), data.get("categorie")]):
+#         return jsonify({"message": "Champs manquants"}), 400
+    
+#     sources_col.update_one(
+#         {"_id": ObjectId(source_id)},
+#         {"$set": data}
+#     )
+#     return jsonify({"message": "Source mise à jour"}), 200
+
+@app.route("/api/sources/<source_id>", methods=["DELETE"])
+def delete_source(source_id):
+    auth = request.headers.get("Authorization")
+    if not auth:
+        return jsonify({"message": "Token manquant"}), 401
+    try:
+        token = auth.split(" ")[1]
+        decoded = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+    except:
+        return jsonify({"message": "Token invalide"}), 401
+    if decoded.get("role") != "admin":
+        return jsonify({"message": "Accès refusé"}), 403
+
+    sources_col.delete_one({"_id": ObjectId(source_id)})
+    return jsonify({"message": "Source supprimée"}), 200
 
 
 if __name__ == "__main__":
