@@ -1,3 +1,4 @@
+import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_bcrypt import Bcrypt
@@ -10,13 +11,14 @@ app = Flask(__name__)
 CORS(app)
 bcrypt = Bcrypt(app)
 
-app.config["SECRET_KEY"] = "SECRET_SUPER_CLE_CHANGE_LA"
+# Configuration sécurisée
+app.config["SECRET_KEY"] = os.getenv("JWT_SECRET", "CHANGE_ME_IN_PRODUCTION")
+MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://Emama:N8F7kSlWoJpZ0bIk@cluster0.1czao7m.mongodb.net/?retryWrites=true&w=majority")
 
 # MongoDB
-MONGO_URI = "mongodb+srv://Emama:N8F7kSlWoJpZ0bIk@cluster0.1czao7m.mongodb.net/?retryWrites=true&w=majority"
 client = MongoClient(MONGO_URI)
 db = client.appels_doffres_db
-sources_col = db.appels_doffres_sourcess
+sources_col = db.appels_doffres_sourcess  # Collection avec double 's' comme dans votre base
 users_col = db.users
 
 
@@ -81,9 +83,14 @@ def get_sources_grouped():
                     pass
         return docs
 
+    # Debug: afficher les catégories existantes
+    all_categories = sources_col.distinct("categorie")
+    print(f"Catégories trouvées dans la base: {all_categories}")
+
     return jsonify({
         "nationale": fetch_block("Nationale"),
-        "internationale": fetch_block("Internationale")
+        "internationale": fetch_block("Internationale"),
+        "debug_categories": all_categories  # Pour debug
     })    
 # Routes Auth
 @app.route("/register", methods=["POST"])
@@ -140,10 +147,17 @@ def add_source():
     data = request.get_json()
     if not all([data.get("nom_entite"), data.get("url"), data.get("categorie")]):
         return jsonify({"message": "Champs manquants"}), 400
+    
+    # Réorganiser les ordres AVANT l'insertion
+    new_order = data.get("order", 1)
+    categorie = data.get("categorie")
+    if new_order and categorie:
+        reorganize_orders_on_insert(categorie, new_order)
+    
     sources_col.insert_one(data)
     return jsonify({"message": "Source ajoutée"}), 201
 
-# Dans votre backend Python, ajoutez cette fonction :
+# Fonctions pour réorganiser les ordres
 def reorganize_orders_on_update(categorie, old_order, new_order, entity_id):
     """Réorganise les ordres lors de la modification"""
     if new_order == old_order:
@@ -170,15 +184,52 @@ def reorganize_orders_on_update(categorie, old_order, new_order, entity_id):
             {"$inc": {"order": -1}}
         )
 
-# Modifiez votre route PUT :
+def reorganize_orders_on_insert(categorie, new_order):
+    """Réorganise les ordres lors de l'insertion - décale vers le bas"""
+    print(f"DEBUG: Réorganisation insertion - Catégorie: '{categorie}', Nouvel ordre: {new_order}")
+    
+    # Compter les éléments qui seront affectés
+    count_before = sources_col.count_documents({
+        "categorie": categorie,
+        "order": {"$gte": new_order}
+    })
+    print(f"DEBUG: {count_before} éléments seront décalés dans la catégorie '{categorie}'")
+    
+    result = sources_col.update_many(
+        {
+            "categorie": categorie,
+            "order": {"$gte": new_order}
+        },
+        {"$inc": {"order": 1}}
+    )
+    
+    print(f"DEBUG: {result.modified_count} éléments modifiés")
+
+# Route PUT complète avec vérification auth
 @app.route("/api/sources/<source_id>", methods=["PUT"])
 def update_source(source_id):
-    # ... vérifications auth ...
+    # Vérification auth
+    auth = request.headers.get("Authorization")
+    if not auth:
+        return jsonify({"message": "Token manquant"}), 401
+    try:
+        token = auth.split(" ")[1]
+        decoded = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+    except:
+        return jsonify({"message": "Token invalide"}), 401
+    if decoded.get("role") != "admin":
+        return jsonify({"message": "Accès refusé"}), 403
     
     data = request.get_json()
+    if not data:
+        return jsonify({"message": "Données manquantes"}), 400
     
     # Récupérer l'ancienne entité
-    old_entity = sources_col.find_one({"_id": ObjectId(source_id)})
+    try:
+        old_entity = sources_col.find_one({"_id": ObjectId(source_id)})
+    except:
+        return jsonify({"message": "ID invalide"}), 400
+    
     if not old_entity:
         return jsonify({"message": "Entité non trouvée"}), 404
     
@@ -189,7 +240,7 @@ def update_source(source_id):
     
     # Si changement de catégorie
     if old_categorie != new_categorie:
-        # Réorganiser l'ancienne catégorie
+        # Réorganiser l'ancienne catégorie (décaler vers le haut)
         sources_col.update_many(
             {
                 "categorie": old_categorie,
@@ -198,7 +249,7 @@ def update_source(source_id):
             },
             {"$inc": {"order": -1}}
         )
-        # Réorganiser la nouvelle catégorie
+        # Réorganiser la nouvelle catégorie (décaler vers le bas)
         sources_col.update_many(
             {
                 "categorie": new_categorie,
@@ -259,7 +310,9 @@ def delete_source(source_id):
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="127.0.0.1", port=8000)
+    port = int(os.getenv("PORT", 8000))
+    debug = os.getenv("FLASK_DEBUG", "False").lower() == "true"
+    app.run(debug=debug, host="0.0.0.0", port=port)
 
 
 # from bcrypt import hashpw, gensalt
