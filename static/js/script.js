@@ -4,8 +4,19 @@ document.addEventListener("DOMContentLoaded", function () {
 
   searchInput.addEventListener("keyup", function (event) {
     const query = searchInput.value;
-    fetch(`/recherche?q=${encodeURIComponent(query)}`)
-      .then((response) => response.json())
+
+    if (query.length < 2) {
+      linksList.innerHTML = "";
+      return;
+    }
+
+    fetch(`/api/recherche?q=${encodeURIComponent(query)}`)
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.json();
+      })
       .then((data) => {
         linksList.innerHTML = ""; // Vide la liste actuelle
         if (data.length > 0) {
@@ -26,6 +37,10 @@ document.addEventListener("DOMContentLoaded", function () {
             '<li class="no-results">Aucun résultat trouvé pour votre recherche.</li>';
         }
       })
-      .catch((error) => console.error("Erreur lors de la recherche:", error));
+      .catch((error) => {
+        console.error("Erreur lors de la recherche:", error);
+        linksList.innerHTML =
+          '<li class="error">Erreur de connexion. Vérifiez que le serveur est démarré.</li>';
+      });
   });
 });

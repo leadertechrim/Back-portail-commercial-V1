@@ -309,6 +309,315 @@ def delete_source(source_id):
     return jsonify({"message": "Source supprimée"}), 200
 
 
+# ===========================================
+# GESTION DES UTILISATEURS (ADMIN) - ROUTES MANQUANTES
+# ===========================================
+
+def admin_required(f):
+    """Décorateur pour vérifier que l'utilisateur est admin"""
+    def decorated_function(*args, **kwargs):
+        auth = request.headers.get("Authorization")
+        if not auth:
+            return jsonify({"message": "Token manquant"}), 401
+        try:
+            token = auth.split(" ")[1]
+            decoded = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+            if decoded.get("role") != "admin":
+                return jsonify({"message": "Accès refusé - Admin requis"}), 403
+        except:
+            return jsonify({"message": "Token invalide"}), 401
+        return f(*args, **kwargs)
+    decorated_function.__name__ = f.__name__
+    return decorated_function
+
+@app.route("/api/users", methods=["GET"])
+@admin_required
+def get_users():
+    """Récupérer tous les utilisateurs (admin uniquement)"""
+    try:
+        users = list(users_col.find({}, {"password": 0}).sort("email", 1))
+        for user in users:
+            user["_id"] = str(user["_id"])
+        return jsonify(users), 200
+    except Exception as e:
+        return jsonify({"message": f"Erreur lors de la récupération des utilisateurs: {str(e)}"}), 500
+
+@app.route("/api/users", methods=["POST"])
+@admin_required
+def create_user():
+    """Créer un nouvel utilisateur (admin uniquement)"""
+    data = request.get_json()
+    if not data:
+        return jsonify({"message": "Données manquantes"}), 400
+    
+    # Validation des champs requis
+    required_fields = ["name", "email", "password", "role"]
+    for field in required_fields:
+        if not data.get(field):
+            return jsonify({"message": f"Le champ {field} est requis"}), 400
+    
+    # Vérifier si l'email existe déjà
+    if users_col.find_one({"email": data["email"]}):
+        return jsonify({"message": "Un utilisateur avec cet email existe déjà"}), 400
+    
+    # Valider le rôle
+    if data["role"] not in ["user", "admin"]:
+        return jsonify({"message": "Rôle invalide"}), 400
+    
+    try:
+        # Hasher le mot de passe
+        hashed_password = bcrypt.generate_password_hash(data["password"]).decode("utf-8")
+        
+        # Créer l'utilisateur
+        user = {
+            "name": data["name"],
+            "email": data["email"],
+            "password": hashed_password,
+            "role": data["role"],
+            "created_at": datetime.utcnow()
+        }
+        
+        result = users_col.insert_one(user)
+        user["_id"] = str(result.inserted_id)
+        del user["password"]  # Ne pas retourner le mot de passe
+        
+        return jsonify({"message": "Utilisateur créé avec succès", "user": user}), 201
+    except Exception as e:
+        return jsonify({"message": "Erreur lors de la création de l'utilisateur"}), 500
+
+@app.route("/api/users/<user_id>", methods=["GET"])
+@admin_required
+def get_user(user_id):
+    """Récupérer un utilisateur spécifique (admin uniquement)"""
+    try:
+        user = users_col.find_one({"_id": ObjectId(user_id)}, {"password": 0})
+        if not user:
+            return jsonify({"message": "Utilisateur non trouvé"}), 404
+        user["_id"] = str(user["_id"])
+        return jsonify(user), 200
+    except Exception as e:
+        return jsonify({"message": f"Erreur lors de la récupération de l'utilisateur: {str(e)}"}), 500
+
+@app.route("/api/users/<user_id>", methods=["PUT"])
+@admin_required
+def update_user(user_id):
+    """Modifier un utilisateur (admin uniquement)"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"message": "Données manquantes"}), 400
+        
+        # Vérifier que l'utilisateur existe
+        user = users_col.find_one({"_id": ObjectId(user_id)})
+        if not user:
+            return jsonify({"message": "Utilisateur non trouvé"}), 404
+        
+        # Préparer les données à mettre à jour
+        update_data = {}
+        if "name" in data:
+            update_data["name"] = data["name"]
+        if "email" in data:
+            # Vérifier que l'email n'est pas déjà utilisé par un autre utilisateur
+            existing_user = users_col.find_one({"email": data["email"], "_id": {"$ne": ObjectId(user_id)}})
+            if existing_user:
+                return jsonify({"message": "Cet email est déjà utilisé"}), 400
+            update_data["email"] = data["email"]
+        if "role" in data:
+            if data["role"] not in ["user", "admin"]:
+                return jsonify({"message": "Rôle invalide"}), 400
+            update_data["role"] = data["role"]
+        if "password" in data and data["password"]:
+            # Hacher le nouveau mot de passe
+            hashed_password = bcrypt.generate_password_hash(data["password"]).decode("utf-8")
+            update_data["password"] = hashed_password
+        
+        update_data["updated_at"] = datetime.utcnow()
+        
+        # Mettre à jour l'utilisateur
+        result = users_col.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": update_data}
+        )
+        
+        if result.modified_count > 0:
+            return jsonify({"message": "Utilisateur mis à jour avec succès"}), 200
+        else:
+            return jsonify({"message": "Aucune modification effectuée"}), 200
+            
+    except Exception as e:
+        return jsonify({"message": f"Erreur lors de la mise à jour de l'utilisateur: {str(e)}"}), 500
+
+@app.route("/api/users/<user_id>", methods=["DELETE"])
+@admin_required
+def delete_user(user_id):
+    """Supprimer un utilisateur (admin uniquement)"""
+    try:
+        # Vérifier que l'utilisateur existe
+        user = users_col.find_one({"_id": ObjectId(user_id)})
+        if not user:
+            return jsonify({"message": "Utilisateur non trouvé"}), 404
+        
+        # Empêcher la suppression du dernier admin
+        if user.get("role") == "admin":
+            admin_count = users_col.count_documents({"role": "admin"})
+            if admin_count <= 1:
+                return jsonify({"message": "Impossible de supprimer le dernier administrateur"}), 400
+        
+        # Supprimer l'utilisateur
+        result = users_col.delete_one({"_id": ObjectId(user_id)})
+        
+        if result.deleted_count > 0:
+            return jsonify({"message": "Utilisateur supprimé avec succès"}), 200
+        else:
+            return jsonify({"message": "Utilisateur non trouvé"}), 404
+            
+    except Exception as e:
+        return jsonify({"message": f"Erreur lors de la suppression de l'utilisateur: {str(e)}"}), 500
+
+@app.route("/api/users/stats", methods=["GET"])
+@admin_required
+def get_user_stats():
+    """Statistiques des utilisateurs (admin uniquement)"""
+    try:
+        total_users = users_col.count_documents({})
+        admin_users = users_col.count_documents({"role": "admin"})
+        regular_users = users_col.count_documents({"role": "user"})
+        
+        return jsonify({
+            "total_users": total_users,
+            "admin_users": admin_users,
+            "regular_users": regular_users
+        }), 200
+    except Exception as e:
+        return jsonify({"message": f"Erreur lors de la récupération des statistiques: {str(e)}"}), 500
+
+@app.route("/api/users/<user_id>/change-password", methods=["POST"])
+@admin_required
+def change_user_password(user_id):
+    """Changer le mot de passe d'un utilisateur (admin uniquement)"""
+    data = request.get_json()
+    if not data:
+        return jsonify({"message": "Données manquantes"}), 400
+    
+    # Validation des champs requis
+    if not data.get("newPassword"):
+        return jsonify({"message": "Le nouveau mot de passe est requis"}), 400
+    
+    if len(data["newPassword"]) < 6:
+        return jsonify({"message": "Le nouveau mot de passe doit contenir au moins 6 caractères"}), 400
+    
+    try:
+        # Récupérer l'utilisateur
+        user = users_col.find_one({"_id": ObjectId(user_id)})
+        if not user:
+            return jsonify({"message": "Utilisateur non trouvé"}), 404
+        
+        # Hasher le nouveau mot de passe
+        new_hashed_password = bcrypt.generate_password_hash(data["newPassword"]).decode("utf-8")
+        
+        # Mettre à jour le mot de passe
+        users_col.update_one(
+            {"_id": ObjectId(user_id)},
+            {
+                "$set": {
+                    "password": new_hashed_password,
+                    "updated_at": datetime.utcnow()
+                }
+            }
+        )
+        
+        return jsonify({"message": "Mot de passe changé avec succès"}), 200
+    except Exception as e:
+        return jsonify({"message": "Erreur lors du changement de mot de passe"}), 500
+
+@app.route("/api/admin/change-password", methods=["POST"])
+@admin_required
+def admin_change_own_password():
+    """Changer son propre mot de passe (admin uniquement)"""
+    auth = request.headers.get("Authorization")
+    if not auth:
+        return jsonify({"message": "Token manquant"}), 401
+    
+    try:
+        token = auth.split(" ")[1]
+        decoded = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+    except:
+        return jsonify({"message": "Token invalide"}), 401
+    
+    if decoded.get("role") != "admin":
+        return jsonify({"message": "Accès refusé"}), 403
+    
+    data = request.get_json()
+    if not data:
+        return jsonify({"message": "Données manquantes"}), 400
+    
+    # Validation des champs requis
+    if not data.get("currentPassword"):
+        return jsonify({"message": "Le mot de passe actuel est requis"}), 400
+    
+    if not data.get("newPassword"):
+        return jsonify({"message": "Le nouveau mot de passe est requis"}), 400
+    
+    if len(data["newPassword"]) < 6:
+        return jsonify({"message": "Le nouveau mot de passe doit contenir au moins 6 caractères"}), 400
+    
+    try:
+        # Récupérer l'utilisateur admin
+        user = users_col.find_one({"_id": ObjectId(decoded.get("user_id"))})
+        if not user:
+            return jsonify({"message": "Utilisateur non trouvé"}), 404
+        
+        # Vérifier le mot de passe actuel
+        if not bcrypt.check_password_hash(user["password"], data["currentPassword"]):
+            return jsonify({"message": "Mot de passe actuel incorrect"}), 400
+        
+        # Hasher le nouveau mot de passe
+        new_hashed_password = bcrypt.generate_password_hash(data["newPassword"]).decode("utf-8")
+        
+        # Mettre à jour le mot de passe
+        users_col.update_one(
+            {"_id": ObjectId(decoded.get("user_id"))},
+            {
+                "$set": {
+                    "password": new_hashed_password,
+                    "updated_at": datetime.utcnow()
+                }
+            }
+        )
+        
+        return jsonify({"message": "Mot de passe changé avec succès"}), 200
+    except Exception as e:
+        return jsonify({"message": "Erreur lors du changement de mot de passe"}), 500
+
+# ===========================================
+# ROUTES DE TEST
+# ===========================================
+
+@app.route("/api/test", methods=["GET"])
+def test_api():
+    return jsonify({"status": "API OK", "message": "Backend fonctionne correctement"})
+
+@app.route("/api/test-jwt", methods=["GET"])
+def test_jwt():
+    """Test de la configuration JWT"""
+    try:
+        # Test de génération de token
+        test_token = jwt.encode({
+            "test": "value",
+            "exp": datetime.utcnow() + timedelta(minutes=1)
+        }, app.config["SECRET_KEY"], algorithm="HS256")
+        
+        # Test de décodage
+        decoded = jwt.decode(test_token, app.config["SECRET_KEY"], algorithms=["HS256"])
+        
+        return jsonify({
+            "status": "JWT OK",
+            "secret_key_set": bool(app.config["SECRET_KEY"]),
+            "test_decoded": decoded
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     debug = os.getenv("FLASK_DEBUG", "False").lower() == "true"
