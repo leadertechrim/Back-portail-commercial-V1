@@ -232,59 +232,45 @@
       </div>
     </div>
 
+    <script src="{{ url_for('static', filename='js/auth.js') }}"></script>
     <script>
-      let authToken = localStorage.getItem("authToken");
-      let currentUser = null;
+        // Vérifier l'authentification
+        if (!auth.isLoggedIn()) {
+            alert("Vous devez être connecté pour accéder à cette page");
+            window.location.href = "/";
+            return;
+        }
 
-      // Vérifier l'authentification
-      if (!authToken) {
-        alert("Vous devez être connecté pour accéder à cette page");
-        window.location.href = "/";
-        return;
-      }
+        if (!auth.isAdmin()) {
+            alert("Accès refusé. Seuls les administrateurs peuvent accéder à cette page");
+            window.location.href = "/";
+            return;
+        }
 
       // Charger les statistiques
       async function loadStats() {
         try {
-          const response = await fetch("/api/users/stats", {
-            headers: {
-              Authorization: `Bearer ${authToken}`,
-            },
-          });
-
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-          }
-
-          const stats = await response.json();
+          const stats = await fetchUserStats();
           document.getElementById("totalUsers").textContent = stats.total_users;
           document.getElementById("adminUsers").textContent = stats.admin_users;
-          document.getElementById("regularUsers").textContent =
-            stats.regular_users;
+          document.getElementById("regularUsers").textContent = stats.regular_users;
         } catch (error) {
           console.error("Erreur lors du chargement des statistiques:", error);
+          document.getElementById("totalUsers").textContent = "Erreur";
+          document.getElementById("adminUsers").textContent = "Erreur";
+          document.getElementById("regularUsers").textContent = "Erreur";
         }
       }
 
       // Charger la liste des utilisateurs
       async function loadUsers() {
         try {
-          const response = await fetch("/api/users", {
-            headers: {
-              Authorization: `Bearer ${authToken}`,
-            },
-          });
-
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-          }
-
-          const users = await response.json();
+          const users = await fetchUsers();
           displayUsers(users);
         } catch (error) {
           console.error("Erreur lors du chargement des utilisateurs:", error);
           document.getElementById("usersTableBody").innerHTML =
-            '<tr><td colspan="4" style="text-align: center; color: #dc3545;">Erreur de chargement</td></tr>';
+            '<tr><td colspan="4" style="text-align: center; color: #dc3545;">Erreur de chargement: ' + error.message + '</td></tr>';
         }
       }
 

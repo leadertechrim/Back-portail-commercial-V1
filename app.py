@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from flask_bcrypt import Bcrypt
 from pymongo import MongoClient
@@ -21,7 +21,17 @@ db = client.appels_doffres_db
 sources_col = db.appels_doffres_sourcess  # Collection avec double 's' comme dans votre base
 users_col = db.users
 
+@app.route("/")
+def home():
+    return render_template('index.html')
 
+@app.route("/admin")
+def admin():
+    return render_template('admin.html')
+
+@app.route("/login")
+def login_page():
+    return render_template('login.html')
 
 @app.route("/api/sources", methods=["GET"])
 def get_sources():
@@ -606,54 +616,54 @@ def admin_change_own_password():
 def test_api():
     return jsonify({"status": "API OK", "message": "Backend fonctionne correctement"})
 
-@app.route("/api/users-public", methods=["GET"])
-def get_users_public():
-    """Route publique pour tester (TEMPORAIRE - À SUPPRIMER EN PRODUCTION)"""
-    try:
-        users = list(users_col.find({}, {"password": 0}).sort("email", 1))
-        for user in users:
-            user["_id"] = str(user["_id"])
-        return jsonify({"users": users, "count": len(users)})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+# @app.route("/api/users-public", methods=["GET"])
+# def get_users_public():
+#     """Route publique pour tester (TEMPORAIRE - À SUPPRIMER EN PRODUCTION)"""
+#     try:
+#         users = list(users_col.find({}, {"password": 0}).sort("email", 1))
+#         for user in users:
+#             user["_id"] = str(user["_id"])
+#         return jsonify({"users": users, "count": len(users)})
+#     except Exception as e:
+#         return jsonify({"error": str(e)}), 500
 
-@app.route("/api/debug", methods=["GET"])
-def debug_info():
-    """Route de diagnostic pour Railway"""
-    try:
-        # Test de connexion MongoDB
-        client.admin.command('ping')
-        mongo_status = "Connected"
-    except Exception as e:
-        mongo_status = f"Error: {str(e)}"
+# @app.route("/api/debug", methods=["GET"])
+# def debug_info():
+#     """Route de diagnostic pour Railway"""
+#     try:
+#         # Test de connexion MongoDB
+#         client.admin.command('ping')
+#         mongo_status = "Connected"
+#     except Exception as e:
+#         mongo_status = f"Error: {str(e)}"
     
-    try:
-        # Compter les utilisateurs
-        user_count = users_col.count_documents({})
-        users_status = f"Found {user_count} users"
-    except Exception as e:
-        users_status = f"Error: {str(e)}"
+#     try:
+#         # Compter les utilisateurs
+#         user_count = users_col.count_documents({})
+#         users_status = f"Found {user_count} users"
+#     except Exception as e:
+#         users_status = f"Error: {str(e)}"
     
-    try:
-        # Compter les sources
-        sources_count = sources_col.count_documents({})
-        sources_status = f"Found {sources_count} sources"
-    except Exception as e:
-        sources_status = f"Error: {str(e)}"
+#     try:
+#         # Compter les sources
+#         sources_count = sources_col.count_documents({})
+#         sources_status = f"Found {sources_count} sources"
+#     except Exception as e:
+#         sources_status = f"Error: {str(e)}"
     
-    return jsonify({
-        "status": "Debug Info",
-        "mongo_uri": MONGO_URI[:50] + "..." if len(MONGO_URI) > 50 else MONGO_URI,
-        "mongo_status": mongo_status,
-        "users_status": users_status,
-        "sources_status": sources_status,
-        "jwt_secret_set": bool(app.config["SECRET_KEY"]),
-        "environment": {
-            "PORT": os.getenv("PORT", "Not set"),
-            "JWT_SECRET": "Set" if os.getenv("JWT_SECRET") else "Not set",
-            "MONGO_URI": "Set" if os.getenv("MONGO_URI") else "Not set"
-        }
-    })
+#     return jsonify({
+#         "status": "Debug Info",
+#         "mongo_uri": MONGO_URI[:50] + "..." if len(MONGO_URI) > 50 else MONGO_URI,
+#         "mongo_status": mongo_status,
+#         "users_status": users_status,
+#         "sources_status": sources_status,
+#         "jwt_secret_set": bool(app.config["SECRET_KEY"]),
+#         "environment": {
+#             "PORT": os.getenv("PORT", "Not set"),
+#             "JWT_SECRET": "Set" if os.getenv("JWT_SECRET") else "Not set",
+#             "MONGO_URI": "Set" if os.getenv("MONGO_URI") else "Not set"
+#         }
+#     })
 
 @app.route("/api/test-jwt", methods=["GET"])
 def test_jwt():
@@ -672,6 +682,49 @@ def test_jwt():
             "status": "JWT OK",
             "secret_key_set": bool(app.config["SECRET_KEY"]),
             "test_decoded": decoded
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ===========================================
+# ROUTES PUBLIQUES POUR RAILWAY (TEMPORAIRE)
+# ===========================================
+
+@app.route("/api/users-public", methods=["GET"])
+def get_users_public():
+    """Route publique pour tester (TEMPORAIRE - À SUPPRIMER EN PRODUCTION)"""
+    try:
+        users = list(users_col.find({}, {"password": 0}).sort("email", 1))
+        for user in users:
+            user["_id"] = str(user["_id"])
+        return jsonify({"users": users, "count": len(users)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# Routes sans authentification pour Railway
+@app.route("/api/users", methods=["GET"])
+def get_users_no_auth():
+    """Route utilisateurs sans authentification pour Railway (TEMPORAIRE)"""
+    try:
+        users = list(users_col.find({}, {"password": 0}).sort("email", 1))
+        for user in users:
+            user["_id"] = str(user["_id"])
+        return jsonify(users)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/users/stats", methods=["GET"])
+def get_user_stats_no_auth():
+    """Route statistiques sans authentification pour Railway (TEMPORAIRE)"""
+    try:
+        total_users = users_col.count_documents({})
+        admin_users = users_col.count_documents({"role": "admin"})
+        regular_users = users_col.count_documents({"role": "user"})
+        
+        return jsonify({
+            "total_users": total_users,
+            "admin_users": admin_users,
+            "regular_users": regular_users
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
