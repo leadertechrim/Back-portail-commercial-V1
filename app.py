@@ -340,10 +340,27 @@ def admin_required(f):
     decorated_function.__name__ = f.__name__
     return decorated_function
 
+def optional_auth(f):
+    """Décorateur pour authentification optionnelle (pour Railway)"""
+    def decorated_function(*args, **kwargs):
+        auth = request.headers.get("Authorization")
+        if auth:
+            try:
+                token = auth.split(" ")[1]
+                decoded = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+                request.current_user = decoded
+            except:
+                request.current_user = None
+        else:
+            request.current_user = None
+        return f(*args, **kwargs)
+    decorated_function.__name__ = f.__name__
+    return decorated_function
+
 @app.route("/api/users", methods=["GET"])
-@admin_required
+@optional_auth
 def get_users():
-    """Récupérer tous les utilisateurs (admin uniquement)"""
+    """Récupérer tous les utilisateurs (avec authentification optionnelle pour Railway)"""
     try:
         # Vérifier la connexion à la base de données
         client.admin.command('ping')
@@ -494,9 +511,9 @@ def delete_user(user_id):
         return jsonify({"message": f"Erreur lors de la suppression de l'utilisateur: {str(e)}"}), 500
 
 @app.route("/api/users/stats", methods=["GET"])
-@admin_required
+@optional_auth
 def get_user_stats():
-    """Statistiques des utilisateurs (admin uniquement)"""
+    """Statistiques des utilisateurs (avec authentification optionnelle pour Railway)"""
     try:
         total_users = users_col.count_documents({})
         admin_users = users_col.count_documents({"role": "admin"})
@@ -687,47 +704,46 @@ def test_jwt():
         return jsonify({"error": str(e)}), 500
 
 # ===========================================
-# ROUTES PUBLIQUES POUR RAILWAY (TEMPORAIRE)
+# ROUTES DE DEBUG POUR RAILWAY
 # ===========================================
 
-@app.route("/api/users-public", methods=["GET"])
-def get_users_public():
-    """Route publique pour tester (TEMPORAIRE - À SUPPRIMER EN PRODUCTION)"""
+@app.route("/api/debug", methods=["GET"])
+def debug_info():
+    """Route de diagnostic pour Railway"""
     try:
-        users = list(users_col.find({}, {"password": 0}).sort("email", 1))
-        for user in users:
-            user["_id"] = str(user["_id"])
-        return jsonify({"users": users, "count": len(users)})
+        # Test de connexion MongoDB
+        client.admin.command('ping')
+        mongo_status = "Connected"
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# Routes sans authentification pour Railway
-@app.route("/api/users", methods=["GET"])
-def get_users_no_auth():
-    """Route utilisateurs sans authentification pour Railway (TEMPORAIRE)"""
+        mongo_status = f"Error: {str(e)}"
+    
     try:
-        users = list(users_col.find({}, {"password": 0}).sort("email", 1))
-        for user in users:
-            user["_id"] = str(user["_id"])
-        return jsonify(users)
+        # Compter les utilisateurs
+        user_count = users_col.count_documents({})
+        users_status = f"Found {user_count} users"
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/users/stats", methods=["GET"])
-def get_user_stats_no_auth():
-    """Route statistiques sans authentification pour Railway (TEMPORAIRE)"""
+        users_status = f"Error: {str(e)}"
+    
     try:
-        total_users = users_col.count_documents({})
-        admin_users = users_col.count_documents({"role": "admin"})
-        regular_users = users_col.count_documents({"role": "user"})
-        
-        return jsonify({
-            "total_users": total_users,
-            "admin_users": admin_users,
-            "regular_users": regular_users
-        })
+        # Compter les sources
+        sources_count = sources_col.count_documents({})
+        sources_status = f"Found {sources_count} sources"
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        sources_status = f"Error: {str(e)}"
+    
+    return jsonify({
+        "status": "Debug Info",
+        "mongo_uri": MONGO_URI[:50] + "..." if len(MONGO_URI) > 50 else MONGO_URI,
+        "mongo_status": mongo_status,
+        "users_status": users_status,
+        "sources_status": sources_status,
+        "jwt_secret_set": bool(app.config["SECRET_KEY"]),
+        "environment": {
+            "PORT": os.getenv("PORT", "Not set"),
+            "JWT_SECRET": "Set" if os.getenv("JWT_SECRET") else "Not set",
+            "MONGO_URI": "Set" if os.getenv("MONGO_URI") else "Not set"
+        }
+    })
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
