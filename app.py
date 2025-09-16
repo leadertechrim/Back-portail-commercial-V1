@@ -335,11 +335,20 @@ def admin_required(f):
 def get_users():
     """Récupérer tous les utilisateurs (admin uniquement)"""
     try:
+        # Vérifier la connexion à la base de données
+        client.admin.command('ping')
+        
+        # Récupérer les utilisateurs
         users = list(users_col.find({}, {"password": 0}).sort("email", 1))
+        
+        # Convertir les ObjectId en string
         for user in users:
             user["_id"] = str(user["_id"])
+        
+        print(f"DEBUG: Récupéré {len(users)} utilisateurs depuis la base de données")
         return jsonify(users), 200
     except Exception as e:
+        print(f"ERROR: Erreur lors de la récupération des utilisateurs: {str(e)}")
         return jsonify({"message": f"Erreur lors de la récupération des utilisateurs: {str(e)}"}), 500
 
 @app.route("/api/users", methods=["POST"])
@@ -596,6 +605,55 @@ def admin_change_own_password():
 @app.route("/api/test", methods=["GET"])
 def test_api():
     return jsonify({"status": "API OK", "message": "Backend fonctionne correctement"})
+
+@app.route("/api/users-public", methods=["GET"])
+def get_users_public():
+    """Route publique pour tester (TEMPORAIRE - À SUPPRIMER EN PRODUCTION)"""
+    try:
+        users = list(users_col.find({}, {"password": 0}).sort("email", 1))
+        for user in users:
+            user["_id"] = str(user["_id"])
+        return jsonify({"users": users, "count": len(users)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/debug", methods=["GET"])
+def debug_info():
+    """Route de diagnostic pour Railway"""
+    try:
+        # Test de connexion MongoDB
+        client.admin.command('ping')
+        mongo_status = "Connected"
+    except Exception as e:
+        mongo_status = f"Error: {str(e)}"
+    
+    try:
+        # Compter les utilisateurs
+        user_count = users_col.count_documents({})
+        users_status = f"Found {user_count} users"
+    except Exception as e:
+        users_status = f"Error: {str(e)}"
+    
+    try:
+        # Compter les sources
+        sources_count = sources_col.count_documents({})
+        sources_status = f"Found {sources_count} sources"
+    except Exception as e:
+        sources_status = f"Error: {str(e)}"
+    
+    return jsonify({
+        "status": "Debug Info",
+        "mongo_uri": MONGO_URI[:50] + "..." if len(MONGO_URI) > 50 else MONGO_URI,
+        "mongo_status": mongo_status,
+        "users_status": users_status,
+        "sources_status": sources_status,
+        "jwt_secret_set": bool(app.config["SECRET_KEY"]),
+        "environment": {
+            "PORT": os.getenv("PORT", "Not set"),
+            "JWT_SECRET": "Set" if os.getenv("JWT_SECRET") else "Not set",
+            "MONGO_URI": "Set" if os.getenv("MONGO_URI") else "Not set"
+        }
+    })
 
 @app.route("/api/test-jwt", methods=["GET"])
 def test_jwt():
