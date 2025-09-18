@@ -1,4 +1,5 @@
 import os
+import re
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from flask_bcrypt import Bcrypt
@@ -20,6 +21,8 @@ client = MongoClient(MONGO_URI)
 db = client.appels_doffres_db
 sources_col = db.appels_doffres_sourcess  # Collection avec double 's' comme dans votre base
 users_col = db.users
+panier_col = db.panier
+calls_for_tender_col = db.calls_for_tender
 
 @app.route("/")
 def home():
@@ -32,6 +35,94 @@ def admin():
 @app.route("/login")
 def login_page():
     return render_template('login.html')
+
+# ===========================================
+# FONCTIONS DE VALIDATION
+# ===========================================
+
+def validate_email(email):
+    """Valider le format de l'email"""
+    if not email or not isinstance(email, str):
+        return False
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(pattern, email) is not None
+
+def validate_password(password):
+    """Valider le mot de passe (minimum 6 caractères)"""
+    return password and isinstance(password, str) and len(password) >= 6
+
+def validate_telephone(telephone):
+    """Valider le format du téléphone"""
+    if not telephone:
+        return True  # Optionnel
+    if not isinstance(telephone, str):
+        return False
+    # Format international simple
+    pattern = r'^\+?[1-9]\d{1,14}$'
+    return re.match(pattern, telephone) is not None
+
+def validate_statut(statut):
+    """Valider le statut utilisateur"""
+    if not statut:
+        return True  # Optionnel
+    valid_statuts = ["actif", "inactif", "suspendu"]
+    return statut in valid_statuts
+
+def validate_gerer(gerer):
+    """Valider le champ gerer (boolean)"""
+    return isinstance(gerer, bool)
+
+def validate_panier_title(title):
+    """Valider le titre du panier"""
+    return title and isinstance(title, str) and len(title.strip()) > 0
+
+def validate_panier_type(type_field):
+    """Valider le type du panier"""
+    valid_types = ["appel_offre", "consultation", "marché", "prestation"]
+    return type_field in valid_types
+
+def validate_panier_price(price):
+    """Valider le prix du panier"""
+    try:
+        price_float = float(price)
+        return price_float >= 0
+    except (ValueError, TypeError):
+        return False
+
+def validate_panier_status(status):
+    """Valider le statut du panier"""
+    valid_statuses = ["Non préparé", "En préparation", "Envoyée"]
+    return status in valid_statuses
+
+def validate_panier_deadline(deadline):
+    """Valider la date limite"""
+    if not deadline:
+        return True  # Optionnel
+    try:
+        datetime.fromisoformat(deadline.replace('Z', '+00:00'))
+        return True
+    except (ValueError, TypeError):
+        return False
+
+def validate_panier_source(source):
+    """Valider l'URL source"""
+    if not source:
+        return True  # Optionnel
+    pattern = r'^https?://.+'
+    return re.match(pattern, source) is not None
+
+def validate_panier_note(note):
+    """Valider les notes (liste d'URLs)"""
+    if not note:
+        return True  # Optionnel
+    if not isinstance(note, list):
+        return False
+    pattern = r'^https?://.+'
+    return all(re.match(pattern, url) for url in note if url)
+
+def validate_panier_commentaire(commentaire):
+    """Valider le commentaire"""
+    return isinstance(commentaire, str)
 
 @app.route("/api/sources", methods=["GET"])
 def get_sources():
@@ -110,12 +201,37 @@ def register():
     password = data.get("password")
     name = data.get("name")
     role = data.get("role", "user")
+    telephone = data.get("telephone", "")
+    statut = data.get("statut", "actif")
+    gerer = data.get("gerer", False)
+
+    # Validations
+    if not validate_email(email):
+        return jsonify({"message": "Format d'email invalide"}), 400
+    if not validate_password(password):
+        return jsonify({"message": "Mot de passe doit contenir au moins 6 caractères"}), 400
+    if not validate_telephone(telephone):
+        return jsonify({"message": "Format de téléphone invalide"}), 400
+    if not validate_statut(statut):
+        return jsonify({"message": "Statut invalide"}), 400
+    if not validate_gerer(gerer):
+        return jsonify({"message": "Champ gerer invalide"}), 400
 
     if users_col.find_one({"email": email}):
         return jsonify({"message": "Utilisateur déjà existant"}), 400
 
     hashed = bcrypt.generate_password_hash(password).decode("utf-8")
-    user = {"email": email, "password": hashed, "name": name, "role": role}
+    user = {
+        "email": email, 
+        "password": hashed, 
+        "name": name, 
+        "role": role,
+        "telephone": telephone,
+        "statut": statut,
+        "gerer": gerer,
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow()
+    }
     users_col.insert_one(user)
     return jsonify({"message": "Utilisateur créé"}), 201
 
@@ -134,7 +250,15 @@ def login():
             "role": user.get("role", "user"),
             "exp": datetime.utcnow() + timedelta(hours=6)
         }, app.config["SECRET_KEY"], algorithm="HS256")
-        return jsonify({"token": token, "role": user.get("role", "user"), "name": user.get("name")})
+        return jsonify({
+            "token": token, 
+            "role": user.get("role", "user"), 
+            "name": user.get("name"),
+            "email": user.get("email"),
+            "telephone": user.get("telephone", ""),
+            "statut": user.get("statut", "actif"),
+            "gerer": user.get("gerer", False)
+        })
     else:
         return jsonify({"message": "Mot de passe incorrect"}), 401
 
@@ -392,6 +516,12 @@ def create_user():
         if not data.get(field):
             return jsonify({"message": f"Le champ {field} est requis"}), 400
     
+    # Validations
+    if not validate_email(data["email"]):
+        return jsonify({"message": "Format d'email invalide"}), 400
+    if not validate_password(data["password"]):
+        return jsonify({"message": "Mot de passe doit contenir au moins 6 caractères"}), 400
+    
     # Vérifier si l'email existe déjà
     if users_col.find_one({"email": data["email"]}):
         return jsonify({"message": "Un utilisateur avec cet email existe déjà"}), 400
@@ -399,6 +529,18 @@ def create_user():
     # Valider le rôle
     if data["role"] not in ["user", "admin"]:
         return jsonify({"message": "Rôle invalide"}), 400
+    
+    # Validations des nouveaux champs
+    telephone = data.get("telephone", "")
+    statut = data.get("statut", "actif")
+    gerer = data.get("gerer", False)
+    
+    if not validate_telephone(telephone):
+        return jsonify({"message": "Format de téléphone invalide"}), 400
+    if not validate_statut(statut):
+        return jsonify({"message": "Statut invalide"}), 400
+    if not validate_gerer(gerer):
+        return jsonify({"message": "Champ gerer invalide"}), 400
     
     try:
         # Hasher le mot de passe
@@ -410,7 +552,11 @@ def create_user():
             "email": data["email"],
             "password": hashed_password,
             "role": data["role"],
-            "created_at": datetime.utcnow()
+            "telephone": telephone,
+            "statut": statut,
+            "gerer": gerer,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
         }
         
         result = users_col.insert_one(user)
@@ -453,6 +599,8 @@ def update_user(user_id):
         if "name" in data:
             update_data["name"] = data["name"]
         if "email" in data:
+            if not validate_email(data["email"]):
+                return jsonify({"message": "Format d'email invalide"}), 400
             # Vérifier que l'email n'est pas déjà utilisé par un autre utilisateur
             existing_user = users_col.find_one({"email": data["email"], "_id": {"$ne": ObjectId(user_id)}})
             if existing_user:
@@ -463,9 +611,23 @@ def update_user(user_id):
                 return jsonify({"message": "Rôle invalide"}), 400
             update_data["role"] = data["role"]
         if "password" in data and data["password"]:
+            if not validate_password(data["password"]):
+                return jsonify({"message": "Mot de passe doit contenir au moins 6 caractères"}), 400
             # Hacher le nouveau mot de passe
             hashed_password = bcrypt.generate_password_hash(data["password"]).decode("utf-8")
             update_data["password"] = hashed_password
+        if "telephone" in data:
+            if not validate_telephone(data["telephone"]):
+                return jsonify({"message": "Format de téléphone invalide"}), 400
+            update_data["telephone"] = data["telephone"]
+        if "statut" in data:
+            if not validate_statut(data["statut"]):
+                return jsonify({"message": "Statut invalide"}), 400
+            update_data["statut"] = data["statut"]
+        if "gerer" in data:
+            if not validate_gerer(data["gerer"]):
+                return jsonify({"message": "Champ gerer invalide"}), 400
+            update_data["gerer"] = data["gerer"]
         
         update_data["updated_at"] = datetime.utcnow()
         
@@ -536,10 +698,10 @@ def change_user_password(user_id):
         return jsonify({"message": "Données manquantes"}), 400
     
     # Validation des champs requis
-    if not data.get("newPassword"):
+    if not data.get("new_password"):
         return jsonify({"message": "Le nouveau mot de passe est requis"}), 400
     
-    if len(data["newPassword"]) < 6:
+    if not validate_password(data["new_password"]):
         return jsonify({"message": "Le nouveau mot de passe doit contenir au moins 6 caractères"}), 400
     
     try:
@@ -549,7 +711,7 @@ def change_user_password(user_id):
             return jsonify({"message": "Utilisateur non trouvé"}), 404
         
         # Hasher le nouveau mot de passe
-        new_hashed_password = bcrypt.generate_password_hash(data["newPassword"]).decode("utf-8")
+        new_hashed_password = bcrypt.generate_password_hash(data["new_password"]).decode("utf-8")
         
         # Mettre à jour le mot de passe
         users_col.update_one(
@@ -588,13 +750,13 @@ def admin_change_own_password():
         return jsonify({"message": "Données manquantes"}), 400
     
     # Validation des champs requis
-    if not data.get("currentPassword"):
+    if not data.get("current_password"):
         return jsonify({"message": "Le mot de passe actuel est requis"}), 400
     
-    if not data.get("newPassword"):
+    if not data.get("new_password"):
         return jsonify({"message": "Le nouveau mot de passe est requis"}), 400
     
-    if len(data["newPassword"]) < 6:
+    if not validate_password(data["new_password"]):
         return jsonify({"message": "Le nouveau mot de passe doit contenir au moins 6 caractères"}), 400
     
     try:
@@ -604,11 +766,11 @@ def admin_change_own_password():
             return jsonify({"message": "Utilisateur non trouvé"}), 404
         
         # Vérifier le mot de passe actuel
-        if not bcrypt.check_password_hash(user["password"], data["currentPassword"]):
+        if not bcrypt.check_password_hash(user["password"], data["current_password"]):
             return jsonify({"message": "Mot de passe actuel incorrect"}), 400
         
         # Hasher le nouveau mot de passe
-        new_hashed_password = bcrypt.generate_password_hash(data["newPassword"]).decode("utf-8")
+        new_hashed_password = bcrypt.generate_password_hash(data["new_password"]).decode("utf-8")
         
         # Mettre à jour le mot de passe
         users_col.update_one(
@@ -704,6 +866,208 @@ def test_jwt():
         return jsonify({"error": str(e)}), 500
 
 # ===========================================
+# GESTION DES APPELS D'OFFRES
+# ===========================================
+
+@app.route("/api/calls-for-tender", methods=["GET"])
+@optional_auth
+def get_calls_for_tender():
+    """Récupérer tous les appels d'offres"""
+    try:
+        calls = list(calls_for_tender_col.find().sort("created_at", -1))
+        
+        for call in calls:
+            call["_id"] = str(call["_id"])
+            # Convertir les dates
+            if "deadline" in call and call["deadline"]:
+                if hasattr(call["deadline"], 'isoformat'):
+                    call["deadline"] = call["deadline"].isoformat()
+            if "created_at" in call and call["created_at"]:
+                if hasattr(call["created_at"], 'isoformat'):
+                    call["created_at"] = call["created_at"].isoformat()
+            if "updated_at" in call and call["updated_at"]:
+                if hasattr(call["updated_at"], 'isoformat'):
+                    call["updated_at"] = call["updated_at"].isoformat()
+        
+        return jsonify(calls), 200
+    except Exception as e:
+        print(f"ERROR: Erreur lors de la récupération des appels d'offres: {str(e)}")
+        return jsonify([]), 200
+
+@app.route("/api/calls-for-tender", methods=["POST"])
+@optional_auth
+def create_call_for_tender():
+    """Créer un nouvel appel d'offres"""
+    try:
+        # Gérer les données FormData
+        if request.content_type and 'multipart/form-data' in request.content_type:
+            title = request.form.get("title")
+            source = request.form.get("source")
+            client = request.form.get("client")
+            state = request.form.get("state")
+            description = request.form.get("description", "")
+            deadline = request.form.get("deadline")
+            price = request.form.get("price", "0")
+            type_field = request.form.get("type", "appel_offre")
+            commentaire = request.form.get("commentaire", "")
+            
+            # Gérer les pièces jointes
+            attachments = []
+            for key, value in request.files.items():
+                if key.startswith('attachment_'):
+                    # Ici vous pouvez sauvegarder le fichier et stocker l'URL
+                    # Pour l'instant, on stocke juste le nom du fichier
+                    attachments.append(value.filename)
+        else:
+            # Gérer les données JSON
+            data = request.get_json()
+            if not data:
+                return jsonify({"message": "Données manquantes"}), 400
+            
+            title = data.get("title")
+            source = data.get("source")
+            client = data.get("client")
+            state = data.get("state")
+            description = data.get("description", "")
+            deadline = data.get("deadline")
+            price = data.get("price", 0)
+            type_field = data.get("type", "appel_offre")
+            commentaire = data.get("commentaire", "")
+            attachments = data.get("attachments", [])
+        
+        # Validation des champs requis
+        if not title:
+            return jsonify({"message": "Le titre est requis"}), 400
+        if not client:
+            return jsonify({"message": "Le client est requis"}), 400
+        if not deadline:
+            return jsonify({"message": "La date limite est requise"}), 400
+        
+        # Créer l'appel d'offres
+        call_data = {
+            "title": title,
+            "source": source or "",
+            "client": client,
+            "state": state or "pending",
+            "description": description,
+            "deadline": datetime.fromisoformat(deadline.replace('Z', '+00:00')),
+            "price": float(price),
+            "type": type_field,
+            "commentaire": commentaire,
+            "attachments": attachments,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
+        }
+        
+        result = calls_for_tender_col.insert_one(call_data)
+        call_data["_id"] = str(result.inserted_id)
+        
+        return jsonify({"message": "Appel d'offres créé avec succès", "call": call_data}), 201
+        
+    except Exception as e:
+        print(f"ERROR: Erreur lors de la création de l'appel d'offres: {str(e)}")
+        return jsonify({"message": f"Erreur lors de la création: {str(e)}"}), 500
+
+@app.route("/api/calls-for-tender/<call_id>", methods=["PUT"])
+@optional_auth
+def update_call_for_tender(call_id):
+    """Modifier un appel d'offres"""
+    try:
+        # Vérifier que l'appel existe
+        call = calls_for_tender_col.find_one({"_id": ObjectId(call_id)})
+        if not call:
+            return jsonify({"message": "Appel d'offres non trouvé"}), 404
+        
+        # Gérer les données FormData
+        if request.content_type and 'multipart/form-data' in request.content_type:
+            update_data = {}
+            
+            if request.form.get("title"):
+                update_data["title"] = request.form.get("title")
+            if request.form.get("source"):
+                update_data["source"] = request.form.get("source")
+            if request.form.get("client"):
+                update_data["client"] = request.form.get("client")
+            if request.form.get("state"):
+                update_data["state"] = request.form.get("state")
+            if request.form.get("description"):
+                update_data["description"] = request.form.get("description")
+            if request.form.get("deadline"):
+                update_data["deadline"] = datetime.fromisoformat(request.form.get("deadline").replace('Z', '+00:00'))
+            if request.form.get("price"):
+                update_data["price"] = float(request.form.get("price"))
+            if request.form.get("type"):
+                update_data["type"] = request.form.get("type")
+            if request.form.get("commentaire"):
+                update_data["commentaire"] = request.form.get("commentaire")
+            
+            # Gérer les nouvelles pièces jointes
+            new_attachments = []
+            for key, value in request.files.items():
+                if key.startswith('attachment_'):
+                    new_attachments.append(value.filename)
+            if new_attachments:
+                update_data["attachments"] = new_attachments
+        else:
+            # Gérer les données JSON
+            data = request.get_json()
+            if not data:
+                return jsonify({"message": "Données manquantes"}), 400
+            
+            update_data = {}
+            if "title" in data:
+                update_data["title"] = data["title"]
+            if "source" in data:
+                update_data["source"] = data["source"]
+            if "client" in data:
+                update_data["client"] = data["client"]
+            if "state" in data:
+                update_data["state"] = data["state"]
+            if "description" in data:
+                update_data["description"] = data["description"]
+            if "deadline" in data:
+                update_data["deadline"] = datetime.fromisoformat(data["deadline"].replace('Z', '+00:00'))
+            if "price" in data:
+                update_data["price"] = float(data["price"])
+            if "type" in data:
+                update_data["type"] = data["type"]
+            if "commentaire" in data:
+                update_data["commentaire"] = data["commentaire"]
+            if "attachments" in data:
+                update_data["attachments"] = data["attachments"]
+        
+        update_data["updated_at"] = datetime.utcnow()
+        
+        # Mettre à jour l'appel d'offres
+        result = calls_for_tender_col.update_one(
+            {"_id": ObjectId(call_id)},
+            {"$set": update_data}
+        )
+        
+        if result.modified_count > 0:
+            return jsonify({"message": "Appel d'offres mis à jour avec succès"}), 200
+        else:
+            return jsonify({"message": "Aucune modification effectuée"}), 200
+            
+    except Exception as e:
+        return jsonify({"message": f"Erreur lors de la mise à jour: {str(e)}"}), 500
+
+@app.route("/api/calls-for-tender/<call_id>", methods=["DELETE"])
+@optional_auth
+def delete_call_for_tender(call_id):
+    """Supprimer un appel d'offres"""
+    try:
+        result = calls_for_tender_col.delete_one({"_id": ObjectId(call_id)})
+        
+        if result.deleted_count > 0:
+            return jsonify({"message": "Appel d'offres supprimé avec succès"}), 200
+        else:
+            return jsonify({"message": "Appel d'offres non trouvé"}), 404
+            
+    except Exception as e:
+        return jsonify({"message": f"Erreur lors de la suppression: {str(e)}"}), 500
+
+# ===========================================
 # ROUTES DE DEBUG POUR RAILWAY
 # ===========================================
 
@@ -744,6 +1108,276 @@ def debug_info():
             "MONGO_URI": "Set" if os.getenv("MONGO_URI") else "Not set"
         }
     })
+
+# ===========================================
+# GESTION DU PANIER
+# ===========================================
+
+@app.route("/api/panier", methods=["GET"])
+@optional_auth
+def get_panier():
+    """Récupérer tous les éléments du panier"""
+    try:
+        items = list(panier_col.find().sort("updated_at", -1))
+        
+        for item in items:
+            item["_id"] = str(item["_id"])
+            # Convertir les dates
+            if "deadline" in item and item["deadline"]:
+                if hasattr(item["deadline"], 'isoformat'):
+                    item["deadline"] = item["deadline"].isoformat()
+            if "created_at" in item and item["created_at"]:
+                if hasattr(item["created_at"], 'isoformat'):
+                    item["created_at"] = item["created_at"].isoformat()
+            if "updated_at" in item and item["updated_at"]:
+                if hasattr(item["updated_at"], 'isoformat'):
+                    item["updated_at"] = item["updated_at"].isoformat()
+            
+            # Transformer commentaire en Commentaire
+            if "commentaire" in item:
+                item["Commentaire"] = item.pop("commentaire")
+        
+        return jsonify(items), 200
+    except Exception as e:
+        print(f"ERROR: Erreur lors de la récupération du panier: {str(e)}")
+        return jsonify([]), 200  # Retourner une liste vide au lieu d'erreur 500
+
+@app.route("/api/panier", methods=["POST"])
+@optional_auth
+def add_to_panier():
+    """Ajouter un élément au panier"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"message": "Données manquantes"}), 400
+        
+        # Champs requis
+        required_fields = ["title", "type", "description", "price", "status", "client", "deadline"]
+        for field in required_fields:
+            if not data.get(field):
+                return jsonify({"message": f"Le champ {field} est requis"}), 400
+        
+        # Validations
+        if not validate_panier_title(data["title"]):
+            return jsonify({"message": "Titre invalide"}), 400
+        
+        if not validate_panier_type(data["type"]):
+            return jsonify({"message": "Type invalide. Doit être: appel_offre, consultation, marché, ou prestation"}), 400
+        
+        if not validate_panier_price(data["price"]):
+            return jsonify({"message": "Prix invalide"}), 400
+        
+        if not validate_panier_status(data["status"]):
+            return jsonify({"message": "Statut invalide. Doit être: Non préparé, En préparation, ou Envoyée"}), 400
+        
+        if not validate_panier_deadline(data["deadline"]):
+            return jsonify({"message": "Date limite invalide"}), 400
+        
+        # Validations optionnelles
+        if "source" in data and not validate_panier_source(data["source"]):
+            return jsonify({"message": "URL source invalide"}), 400
+        
+        if "note" in data and not validate_panier_note(data["note"]):
+            return jsonify({"message": "Format des notes invalide"}), 400
+        
+        if "commentaire" in data and not validate_panier_commentaire(data["commentaire"]):
+            return jsonify({"message": "Format du commentaire invalide"}), 400
+        
+        # Créer l'élément du panier
+        panier_item = {
+            "title": data["title"],
+            "type": data["type"],
+            "description": data["description"],
+            "price": float(data["price"]),
+            "status": data["status"],
+            "client": data["client"],
+            "deadline": datetime.fromisoformat(data["deadline"].replace('Z', '+00:00')),
+            "source": data.get("source", ""),
+            "note": data.get("note", []),
+            "commentaire": data.get("commentaire", ""),
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
+        }
+        
+        result = panier_col.insert_one(panier_item)
+        panier_item["_id"] = str(result.inserted_id)
+        
+        # Transformer commentaire en Commentaire pour la réponse
+        if "commentaire" in panier_item:
+            panier_item["Commentaire"] = panier_item.pop("commentaire")
+        
+        return jsonify({"message": "Élément ajouté au panier", "item": panier_item}), 201
+        
+    except Exception as e:
+        print(f"ERROR: Erreur lors de l'ajout au panier: {str(e)}")
+        return jsonify({"message": f"Erreur lors de l'ajout au panier: {str(e)}"}), 500
+
+@app.route("/api/panier/<item_id>", methods=["GET"])
+@optional_auth
+def get_panier_item(item_id):
+    """Récupérer un élément spécifique du panier"""
+    try:
+        item = panier_col.find_one({"_id": ObjectId(item_id)})
+        if not item:
+            return jsonify({"message": "Élément non trouvé"}), 404
+        
+        item["_id"] = str(item["_id"])
+        
+        # Transformer commentaire en Commentaire
+        if "commentaire" in item:
+            item["Commentaire"] = item.pop("commentaire")
+        
+        return jsonify(item), 200
+    except Exception as e:
+        return jsonify({"message": f"Erreur lors de la récupération de l'élément: {str(e)}"}), 500
+
+@app.route("/api/panier/<item_id>", methods=["PUT"])
+@optional_auth
+def update_panier_item(item_id):
+    """Modifier un élément du panier"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"message": "Données manquantes"}), 400
+        
+        # Vérifier que l'élément existe
+        item = panier_col.find_one({"_id": ObjectId(item_id)})
+        if not item:
+            return jsonify({"message": "Élément non trouvé"}), 404
+        
+        # Préparer les données à mettre à jour
+        update_data = {}
+        
+        if "title" in data:
+            if not validate_panier_title(data["title"]):
+                return jsonify({"message": "Titre invalide"}), 400
+            update_data["title"] = data["title"]
+        
+        if "type" in data:
+            if not validate_panier_type(data["type"]):
+                return jsonify({"message": "Type invalide. Doit être: appel_offre, consultation, marché, ou prestation"}), 400
+            update_data["type"] = data["type"]
+        
+        if "description" in data:
+            update_data["description"] = data["description"]
+        
+        if "price" in data:
+            if not validate_panier_price(data["price"]):
+                return jsonify({"message": "Prix invalide"}), 400
+            update_data["price"] = float(data["price"])
+        
+        if "status" in data:
+            if not validate_panier_status(data["status"]):
+                return jsonify({"message": "Statut invalide. Doit être: Non préparé, En préparation, ou Envoyée"}), 400
+            update_data["status"] = data["status"]
+        
+        if "client" in data:
+            update_data["client"] = data["client"]
+        
+        if "deadline" in data:
+            if not validate_panier_deadline(data["deadline"]):
+                return jsonify({"message": "Date limite invalide"}), 400
+            update_data["deadline"] = datetime.fromisoformat(data["deadline"].replace('Z', '+00:00'))
+        
+        if "source" in data:
+            if not validate_panier_source(data["source"]):
+                return jsonify({"message": "URL source invalide"}), 400
+            update_data["source"] = data["source"]
+        
+        if "note" in data:
+            if not validate_panier_note(data["note"]):
+                return jsonify({"message": "Format des notes invalide"}), 400
+            update_data["note"] = data["note"]
+        
+        if "commentaire" in data:
+            if not validate_panier_commentaire(data["commentaire"]):
+                return jsonify({"message": "Format du commentaire invalide"}), 400
+            update_data["commentaire"] = data["commentaire"]
+        
+        update_data["updated_at"] = datetime.utcnow()
+        
+        # Mettre à jour l'élément
+        result = panier_col.update_one(
+            {"_id": ObjectId(item_id)},
+            {"$set": update_data}
+        )
+        
+        if result.modified_count > 0:
+            return jsonify({"message": "Élément mis à jour avec succès"}), 200
+        else:
+            return jsonify({"message": "Aucune modification effectuée"}), 200
+            
+    except Exception as e:
+        return jsonify({"message": f"Erreur lors de la mise à jour de l'élément: {str(e)}"}), 500
+
+@app.route("/api/panier/<item_id>", methods=["DELETE"])
+@optional_auth
+def delete_panier_item(item_id):
+    """Supprimer un élément du panier"""
+    try:
+        result = panier_col.delete_one({"_id": ObjectId(item_id)})
+        
+        if result.deleted_count > 0:
+            return jsonify({"message": "Élément supprimé avec succès"}), 200
+        else:
+            return jsonify({"message": "Élément non trouvé"}), 404
+            
+    except Exception as e:
+        return jsonify({"message": f"Erreur lors de la suppression de l'élément: {str(e)}"}), 500
+
+@app.route("/api/panier/stats", methods=["GET"])
+@optional_auth
+def get_panier_stats():
+    """Statistiques du panier"""
+    try:
+        # Compter par statut
+        stats = {
+            "total_items": panier_col.count_documents({}),
+            "non_prepare_items": panier_col.count_documents({"status": "Non préparé"}),
+            "en_preparation_items": panier_col.count_documents({"status": "En préparation"}),
+            "envoyee_items": panier_col.count_documents({"status": "Envoyée"}),
+            "total_value": 0
+        }
+        
+        # Calculer la valeur totale
+        pipeline = [
+            {"$group": {"_id": None, "total": {"$sum": "$price"}}}
+        ]
+        result = list(panier_col.aggregate(pipeline))
+        if result:
+            stats["total_value"] = result[0]["total"]
+        
+        return jsonify(stats), 200
+    except Exception as e:
+        print(f"ERROR: Erreur lors de la récupération des statistiques: {str(e)}")
+        return jsonify({
+            "total_items": 0,
+            "non_prepare_items": 0,
+            "en_preparation_items": 0,
+            "envoyee_items": 0,
+            "total_value": 0
+        }), 200
+
+@app.route("/api/test-panier", methods=["GET"])
+def test_panier_connection():
+    """Test de connexion à la collection panier"""
+    try:
+        # Test de connexion
+        client.admin.command('ping')
+        
+        # Compter les éléments
+        count = panier_col.count_documents({})
+        
+        return jsonify({
+            "status": "Panier OK",
+            "message": f"Connexion à la collection panier réussie. {count} éléments trouvés.",
+            "count": count
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "status": "Panier Error",
+            "message": f"Erreur de connexion à la collection panier: {str(e)}"
+        }), 500
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
