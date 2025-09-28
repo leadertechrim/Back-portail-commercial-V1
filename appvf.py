@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from bson.objectid import ObjectId
 
 app = Flask(__name__)
-CORS(app, origins=['http://localhost:3000', 'http://localhost:8080', 'http://127.0.0.1:3000', 'http://127.0.0.1:8080'])
+CORS(app)
 bcrypt = Bcrypt(app)
 
 # Configuration sécurisée
@@ -26,16 +26,8 @@ calls_for_tender_col = db.calls_for_tender
 clients_col = db.Clients
 partenaires_col = db.Partenaires
 personnels_col = db.Personnels
-devis_col = db.devis
 factures_col = db.factures
-
-# Nouvelles collections
-link_categories_col = db.link_categories
-offer_categories_col = db.offer_categories
-links_col = db.links
-quote_statuses_col = db.quote_statuses
-invoice_statuses_col = db.invoice_statuses
-offer_statuses_col = db.offer_statuses
+devis_col = db.devis
 
 @app.route("/")
 def home():
@@ -78,7 +70,7 @@ def validate_statut(statut):
     """Valider le statut utilisateur"""
     if not statut:
         return True  # Optionnel
-    valid_statuts = ["actif", "inactif"]
+    valid_statuts = ["actif", "inactif", "suspendu"]
     return statut in valid_statuts
 
 def validate_gerer(gerer):
@@ -89,23 +81,23 @@ def validate_panier_title(title):
     """Valider le titre du panier"""
     return title and isinstance(title, str) and len(title.strip()) > 0
 
-# def validate_panier_type(type_field):
-#     """Valider le type du panier"""
-#     valid_types = ["appel_offre", "consultation", "marché", "prestation"]
-#     return type_field in valid_types
+def validate_panier_type(type_field):
+    """Valider le type du panier"""
+    valid_types = ["appel_offre", "consultation", "marché", "prestation"]
+    return type_field in valid_types
 
-# def validate_panier_price(price):
-#     """Valider le prix du panier"""
-#     try:
-#         price_float = float(price)
-#         return price_float >= 0
-#     except (ValueError, TypeError):
-#         return False
+def validate_panier_price(price):
+    """Valider le prix du panier"""
+    try:
+        price_float = float(price)
+        return price_float >= 0
+    except (ValueError, TypeError):
+        return False
 
-# def validate_panier_status(status):
-#     """Valider le statut du panier"""
-#     valid_statuses = ["Non préparé", "En préparation", "Envoyée"]
-#     return status in valid_statuses
+def validate_panier_status(status):
+    """Valider le statut du panier"""
+    valid_statuses = ["Non préparé", "En préparation", "Envoyée"]
+    return status in valid_statuses
 
 def validate_panier_deadline(deadline):
     """Valider la date limite"""
@@ -157,14 +149,10 @@ def validate_whatsapp(whatsapp):
 
 def validate_adresse(adresse):
     """Valider l'adresse"""
-    if not adresse:
-        return True  # Optionnel
     return isinstance(adresse, str)
 
 def validate_note_commentaire(note_commentaire):
     """Valider la note/commentaire"""
-    if not note_commentaire:
-        return True  # Optionnel
     return isinstance(note_commentaire, str)
 
 # ===========================================
@@ -196,9 +184,9 @@ def validate_offre_date_limite(date_limite):
     except:
         return False
 
-# def validate_offre_statut(statut):
-#     """Valider le statut de l'offre"""
-#     return statut in ["Non préparé", "En préparation", "Envoyée"]
+def validate_offre_statut(statut):
+    """Valider le statut de l'offre"""
+    return statut in ["Non préparé", "En préparation", "Envoyée"]
 
 def validate_offre_responsable_id(responsable_id):
     """Valider l'ID du responsable"""
@@ -210,11 +198,15 @@ def validate_offre_responsable_id(responsable_id):
     except:
         return False
 
+def validate_offre_documents(documents):
+    """Valider les documents de l'offre"""
+    return isinstance(documents, list) and all(isinstance(doc, str) for doc in documents)
+
 def validate_offre_categorie(categorie):
     """Valider la catégorie de l'offre"""
     if not categorie:
         return True  # Optionnel
-    valid_categories = ["nationale", "internationale"]
+    valid_categories = ["national", "international", "local", "regional"]
     return isinstance(categorie, str) and categorie.lower() in valid_categories
 
 def validate_offre_numero(numero):
@@ -229,26 +221,74 @@ def validate_offre_partenaire(partenaire):
         return True  # Optionnel
     return isinstance(partenaire, str) and len(partenaire.strip()) > 0
 
-def validate_offre_documents(documents):
-    """Valider les documents de l'offre"""
-    if not isinstance(documents, list):
+def validate_user_fonction(fonction):
+    """Valider la fonction de l'utilisateur"""
+    if not fonction:
+        return True  # Optionnel
+    return isinstance(fonction, str) and len(fonction.strip()) > 0
+
+# ===========================================
+# VALIDATIONS POUR LES FACTURES ET DEVIS
+# ===========================================
+
+def validate_numero_facture(numero):
+    """Valider le numéro de facture"""
+    if not numero or not isinstance(numero, str):
         return False
-    
-    # Accepter les strings (URLs) ou les objets de fichiers
-    for doc in documents:
-        if isinstance(doc, str):
-            continue  # URL ou chemin de fichier
-        elif isinstance(doc, dict) and 'filename' in doc:
-            continue  # Objet fichier uploadé
-        elif hasattr(doc, 'filename'):
-            continue  # Objet File Flask
-        else:
-            return False
-    
-    return True
+    # Format: FAC-YYYY-XXX
+    pattern = r'^FAC-\d{4}-\d{3,}$'
+    return re.match(pattern, numero) is not None
+
+def validate_numero_devis(numero):
+    """Valider le numéro de devis"""
+    if not numero or not isinstance(numero, str):
+        return False
+    # Format: DEV-YYYY-XXX
+    pattern = r'^DEV-\d{4}-\d{3,}$'
+    return re.match(pattern, numero) is not None
+
+def validate_intitule(intitule):
+    """Valider l'intitulé"""
+    return intitule and isinstance(intitule, str) and len(intitule.strip()) > 0
+
+def validate_date_emission(date_emission):
+    """Valider la date d'émission"""
+    if not isinstance(date_emission, str):
+        return False
+    try:
+        datetime.fromisoformat(date_emission.replace('Z', '+00:00'))
+        return True
+    except:
+        return False
+
+def validate_etat_facture(etat):
+    """Valider l'état de la facture"""
+    valid_etats = ["A envoyer au client", "En attente de payement", "Payée"]
+    return etat in valid_etats
+
+def validate_etat_devis(etat):
+    """Valider l'état du devis"""
+    valid_etats = ["Validé", "Transformé en facture"]
+    return etat in valid_etats
+
+def validate_object_id(object_id):
+    """Valider un ObjectId MongoDB"""
+    if not isinstance(object_id, str):
+        return False
+    try:
+        ObjectId(object_id)
+        return True
+    except:
+        return False
+
+def validate_document_path(document):
+    """Valider le chemin du document (pour compatibilité avec l'ancien format)"""
+    if not document:
+        return True  # Optionnel
+    return isinstance(document, str) and len(document.strip()) > 0
 
 def validate_documents_array(documents):
-    """Valider un array de documents (URLs) pour devis/factures"""
+    """Valider un array de documents (URLs)"""
     if not documents:
         return True  # Optionnel
     
@@ -262,42 +302,58 @@ def validate_documents_array(documents):
     
     return True
 
-def upload_document_to_cloudinary(file, folder="offres_documents"):
-    """Upload un document vers Cloudinary et retourne l'URL"""
-    try:
-        import cloudinary
-        import cloudinary.uploader
-        
-        # Configuration Cloudinary (utilise les mêmes credentials que t.py)
-        cloudinary.config(
-            cloud_name="dskdortsz",  
-            api_key="843918322767789",          
-            api_secret="CEgn2u-KoQyfCFmiGcv48125tYc"
-        )
-        
-        # Déterminer le type de ressource basé sur l'extension
-        filename = file.filename.lower()
-        if filename.endswith(('.pdf', '.doc', '.docx', '.txt')):
-            resource_type = "raw"
-        elif filename.endswith(('.jpg', '.jpeg', '.png', '.gif')):
-            resource_type = "image"
-        else:
-            resource_type = "raw"
-        
-        # Upload vers Cloudinary
-        result = cloudinary.uploader.upload(
-            file,
-            folder=folder,
-            resource_type=resource_type,
-            access_mode="public",
-            use_filename=True,
-            unique_filename=False
-        )
-        
-        return result['secure_url']
-    except Exception as e:
-        print(f"Erreur upload Cloudinary: {str(e)}")
-        return None
+# ===========================================
+# HELPERS POUR LA GÉNÉRATION AUTOMATIQUE DE NUMÉROS
+# ===========================================
+
+def clean_name_for_number(name):
+    """Nettoyer un nom pour l'utiliser dans un numéro (supprime espaces et caractères spéciaux)"""
+    if not name:
+        return "Unknown"
+    # Remplacer espaces par underscore et garder seulement alphanumérique
+    cleaned = re.sub(r'[^a-zA-Z0-9\s]', '', name)
+    cleaned = re.sub(r'\s+', '', cleaned)  # Supprimer tous les espaces
+    return cleaned[:15] if cleaned else "Unknown"  # Limiter à 15 caractères
+
+def generate_numero_facture(client_name="", offre_name=""):
+    """Générer un numéro de facture automatique avec nouveau format Fac_NomClient_NomOffre"""
+    client_clean = clean_name_for_number(client_name)
+    offre_clean = clean_name_for_number(offre_name)
+    
+    base_numero = f"Fac_{client_clean}_{offre_clean}"
+    
+    # Vérifier l'unicité et ajouter un suffixe si nécessaire
+    counter = 1
+    numero_final = base_numero
+    
+    while factures_col.find_one({"numero_facture": numero_final}):
+        numero_final = f"{base_numero}_{counter}"
+        counter += 1
+        if counter > 999:  # Sécurité pour éviter boucle infinie
+            numero_final = f"{base_numero}_{datetime.now().strftime('%H%M%S')}"
+            break
+    
+    return numero_final
+
+def generate_numero_devis(client_name="", offre_name=""):
+    """Générer un numéro de devis automatique avec nouveau format Dev_NomClient_NomOffre"""
+    client_clean = clean_name_for_number(client_name)
+    offre_clean = clean_name_for_number(offre_name)
+    
+    base_numero = f"Dev_{client_clean}_{offre_clean}"
+    
+    # Vérifier l'unicité et ajouter un suffixe si nécessaire
+    counter = 1
+    numero_final = base_numero
+    
+    while devis_col.find_one({"numero_devis": numero_final}):
+        numero_final = f"{base_numero}_{counter}"
+        counter += 1
+        if counter > 999:  # Sécurité pour éviter boucle infinie
+            numero_final = f"{base_numero}_{datetime.now().strftime('%H%M%S')}"
+            break
+    
+    return numero_final
 
 def viewer_required(f):
     """Décorateur pour vérifier que l'utilisateur est au moins spectateur (peut voir mais pas modifier)"""
@@ -401,6 +457,7 @@ def register():
     whatsapp = data.get("whatsapp", "")
     adresse = data.get("adresse", "")
     statut = data.get("statut", "actif")
+    fonction = data.get("Fonction", "")
 
     # Validations
     if not validate_email(email):
@@ -415,6 +472,8 @@ def register():
         return jsonify({"message": "Format d'adresse invalide"}), 400
     if not validate_statut(statut):
         return jsonify({"message": "Statut invalide"}), 400
+    if not validate_user_fonction(fonction):
+        return jsonify({"message": "Format de fonction invalide"}), 400
 
     if users_col.find_one({"email": email}):
         return jsonify({"message": "Utilisateur déjà existant"}), 400
@@ -429,6 +488,7 @@ def register():
         "whatsapp": whatsapp,
         "adresse": adresse,
         "statut": statut,
+        "Fonction": fonction,
         "created_at": datetime.utcnow(),
         "updated_at": datetime.utcnow()
     }
@@ -459,7 +519,8 @@ def login():
             "telephone": user.get("telephone", ""),
             "whatsapp": user.get("whatsapp", ""),
             "adresse": user.get("adresse", ""),
-            "statut": user.get("statut", "actif")
+            "statut": user.get("statut", "actif"),
+            "Fonction": user.get("Fonction", "")
         })
     else:
         return jsonify({"message": "Mot de passe incorrect"}), 401
@@ -737,6 +798,7 @@ def create_user():
     whatsapp = data.get("whatsapp", "")
     adresse = data.get("adresse", "")
     statut = data.get("statut", "actif")
+    fonction = data.get("Fonction", "")
     
     if not validate_telephone(telephone):
         return jsonify({"message": "Format de téléphone invalide"}), 400
@@ -746,6 +808,8 @@ def create_user():
         return jsonify({"message": "Format d'adresse invalide"}), 400
     if not validate_statut(statut):
         return jsonify({"message": "Statut invalide"}), 400
+    if not validate_user_fonction(fonction):
+        return jsonify({"message": "Format de fonction invalide"}), 400
     
     try:
         # Hasher le mot de passe
@@ -761,6 +825,7 @@ def create_user():
             "whatsapp": whatsapp,
             "adresse": adresse,
             "statut": statut,
+            "Fonction": fonction,
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow()
         }
@@ -838,6 +903,10 @@ def update_user(user_id):
             if not validate_adresse(data["adresse"]):
                 return jsonify({"message": "Format d'adresse invalide"}), 400
             update_data["adresse"] = data["adresse"]
+        if "Fonction" in data:
+            if not validate_user_fonction(data["Fonction"]):
+                return jsonify({"message": "Format de fonction invalide"}), 400
+            update_data["Fonction"] = data["Fonction"]
         
         update_data["updated_at"] = datetime.utcnow()
         
@@ -1077,7 +1146,207 @@ def test_jwt():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# ===========================================
+# GESTION DES APPELS D'OFFRES
+# ===========================================
 
+@app.route("/api/calls-for-tender", methods=["GET"])
+@viewer_required
+def get_calls_for_tender():
+    """Récupérer tous les appels d'offres"""
+    try:
+        calls = list(calls_for_tender_col.find().sort("created_at", -1))
+        
+        for call in calls:
+            call["_id"] = str(call["_id"])
+            # Convertir les dates
+            if "deadline" in call and call["deadline"]:
+                if hasattr(call["deadline"], 'isoformat'):
+                    call["deadline"] = call["deadline"].isoformat()
+            if "created_at" in call and call["created_at"]:
+                if hasattr(call["created_at"], 'isoformat'):
+                    call["created_at"] = call["created_at"].isoformat()
+            if "updated_at" in call and call["updated_at"]:
+                if hasattr(call["updated_at"], 'isoformat'):
+                    call["updated_at"] = call["updated_at"].isoformat()
+        
+        return jsonify(calls), 200
+    except Exception as e:
+        print(f"ERROR: Erreur lors de la récupération des appels d'offres: {str(e)}")
+        return jsonify([]), 200
+
+@app.route("/api/calls-for-tender", methods=["POST"])
+@optional_auth
+def create_call_for_tender():
+    """Créer un nouvel appel d'offres"""
+    try:
+        # Gérer les données FormData
+        if request.content_type and 'multipart/form-data' in request.content_type:
+            title = request.form.get("title")
+            source = request.form.get("source")
+            client = request.form.get("client")
+            state = request.form.get("state")
+            description = request.form.get("description", "")
+            deadline = request.form.get("deadline")
+            price = request.form.get("price", "0")
+            type_field = request.form.get("type", "appel_offre")
+            commentaire = request.form.get("commentaire", "")
+            
+            # Gérer les pièces jointes
+            attachments = []
+            for key, value in request.files.items():
+                if key.startswith('attachment_'):
+                    # Ici vous pouvez sauvegarder le fichier et stocker l'URL
+                    # Pour l'instant, on stocke juste le nom du fichier
+                    attachments.append(value.filename)
+        else:
+            # Gérer les données JSON
+            data = request.get_json()
+            if not data:
+                return jsonify({"message": "Données manquantes"}), 400
+            
+            title = data.get("title")
+            source = data.get("source")
+            client = data.get("client")
+            state = data.get("state")
+            description = data.get("description", "")
+            deadline = data.get("deadline")
+            price = data.get("price", 0)
+            type_field = data.get("type", "appel_offre")
+            commentaire = data.get("commentaire", "")
+            attachments = data.get("attachments", [])
+        
+        # Validation des champs requis
+        if not title:
+            return jsonify({"message": "Le titre est requis"}), 400
+        if not client:
+            return jsonify({"message": "Le client est requis"}), 400
+        if not deadline:
+            return jsonify({"message": "La date limite est requise"}), 400
+        
+        # Créer l'appel d'offres
+        call_data = {
+            "title": title,
+            "source": source or "",
+            "client": client,
+            "state": state or "pending",
+            "description": description,
+            "deadline": datetime.fromisoformat(deadline.replace('Z', '+00:00')),
+            "price": float(price),
+            "type": type_field,
+            "commentaire": commentaire,
+            "attachments": attachments,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
+        }
+        
+        result = calls_for_tender_col.insert_one(call_data)
+        call_data["_id"] = str(result.inserted_id)
+        
+        return jsonify({"message": "Appel d'offres créé avec succès", "call": call_data}), 201
+        
+    except Exception as e:
+        print(f"ERROR: Erreur lors de la création de l'appel d'offres: {str(e)}")
+        return jsonify({"message": f"Erreur lors de la création: {str(e)}"}), 500
+
+@app.route("/api/calls-for-tender/<call_id>", methods=["PUT"])
+@optional_auth
+def update_call_for_tender(call_id):
+    """Modifier un appel d'offres"""
+    try:
+        # Vérifier que l'appel existe
+        call = calls_for_tender_col.find_one({"_id": ObjectId(call_id)})
+        if not call:
+            return jsonify({"message": "Appel d'offres non trouvé"}), 404
+        
+        # Gérer les données FormData
+        if request.content_type and 'multipart/form-data' in request.content_type:
+            update_data = {}
+            
+            if request.form.get("title"):
+                update_data["title"] = request.form.get("title")
+            if request.form.get("source"):
+                update_data["source"] = request.form.get("source")
+            if request.form.get("client"):
+                update_data["client"] = request.form.get("client")
+            if request.form.get("state"):
+                update_data["state"] = request.form.get("state")
+            if request.form.get("description"):
+                update_data["description"] = request.form.get("description")
+            if request.form.get("deadline"):
+                update_data["deadline"] = datetime.fromisoformat(request.form.get("deadline").replace('Z', '+00:00'))
+            if request.form.get("price"):
+                update_data["price"] = float(request.form.get("price"))
+            if request.form.get("type"):
+                update_data["type"] = request.form.get("type")
+            if request.form.get("commentaire"):
+                update_data["commentaire"] = request.form.get("commentaire")
+            
+            # Gérer les nouvelles pièces jointes
+            new_attachments = []
+            for key, value in request.files.items():
+                if key.startswith('attachment_'):
+                    new_attachments.append(value.filename)
+            if new_attachments:
+                update_data["attachments"] = new_attachments
+        else:
+            # Gérer les données JSON
+            data = request.get_json()
+            if not data:
+                return jsonify({"message": "Données manquantes"}), 400
+            
+            update_data = {}
+            if "title" in data:
+                update_data["title"] = data["title"]
+            if "source" in data:
+                update_data["source"] = data["source"]
+            if "client" in data:
+                update_data["client"] = data["client"]
+            if "state" in data:
+                update_data["state"] = data["state"]
+            if "description" in data:
+                update_data["description"] = data["description"]
+            if "deadline" in data:
+                update_data["deadline"] = datetime.fromisoformat(data["deadline"].replace('Z', '+00:00'))
+            if "price" in data:
+                update_data["price"] = float(data["price"])
+            if "type" in data:
+                update_data["type"] = data["type"]
+            if "commentaire" in data:
+                update_data["commentaire"] = data["commentaire"]
+            if "attachments" in data:
+                update_data["attachments"] = data["attachments"]
+        
+        update_data["updated_at"] = datetime.utcnow()
+        
+        # Mettre à jour l'appel d'offres
+        result = calls_for_tender_col.update_one(
+            {"_id": ObjectId(call_id)},
+            {"$set": update_data}
+        )
+        
+        if result.modified_count > 0:
+            return jsonify({"message": "Appel d'offres mis à jour avec succès"}), 200
+        else:
+            return jsonify({"message": "Aucune modification effectuée"}), 200
+            
+    except Exception as e:
+        return jsonify({"message": f"Erreur lors de la mise à jour: {str(e)}"}), 500
+
+@app.route("/api/calls-for-tender/<call_id>", methods=["DELETE"])
+@optional_auth
+def delete_call_for_tender(call_id):
+    """Supprimer un appel d'offres"""
+    try:
+        result = calls_for_tender_col.delete_one({"_id": ObjectId(call_id)})
+        
+        if result.deleted_count > 0:
+            return jsonify({"message": "Appel d'offres supprimé avec succès"}), 200
+        else:
+            return jsonify({"message": "Appel d'offres non trouvé"}), 404
+            
+    except Exception as e:
+        return jsonify({"message": f"Erreur lors de la suppression: {str(e)}"}), 500
 
 # ===========================================
 # GESTION DES CLIENTS
@@ -1699,18 +1968,50 @@ def get_offres():
                 if hasattr(offre["updated_at"], 'isoformat'):
                     offre["updated_at"] = offre["updated_at"].isoformat()
             
-            # Mapping des nouveaux champs pour compatibilité
-            if "Catégorie" in offre:
-                offre["categorie"] = offre["Catégorie"]
-            if "N-Offre" in offre:
-                offre["numero"] = offre["N-Offre"]
-            if "Partenaire" in offre:
-                offre["partenaire"] = offre["Partenaire"]
         
         return jsonify(offres), 200
     except Exception as e:
         print(f"ERROR: Erreur lors de la récupération des offres: {str(e)}")
         return jsonify([]), 200
+
+@app.route("/api/debug-offres/<offre_id>", methods=["GET"])
+@viewer_required
+def debug_offre(offre_id):
+    """Route de debug pour examiner une offre spécifique"""
+    try:
+        offre = offres_col.find_one({"_id": ObjectId(offre_id)})
+        if not offre:
+            return jsonify({"message": "Offre non trouvée"}), 404
+        
+        # Log complet de l'offre pour debug
+        print(f"DEBUG /api/debug-offres/{offre_id}:")
+        print(f"  Toutes les clés: {list(offre.keys())}")
+        print(f"  Catégorie: '{offre.get('Catégorie', 'ABSENT')}'")
+        print(f"  N-Offre: '{offre.get('N-Offre', 'ABSENT')}'")
+        print(f"  Partenaire: '{offre.get('Partenaire', 'ABSENT')}'")
+        print(f"  Intitulée: '{offre.get('intitulee', 'ABSENT')}'")
+        print(f"  Client: '{offre.get('client', 'ABSENT')}'")
+        
+        # Convertir les IDs pour le retour JSON
+        offre["_id"] = str(offre["_id"])
+        if "responsable_id" in offre:
+            offre["responsable_id"] = str(offre["responsable_id"])
+        
+        # Convertir les dates
+        if "date_limite" in offre and offre["date_limite"]:
+            if hasattr(offre["date_limite"], 'isoformat'):
+                offre["date_limite"] = offre["date_limite"].isoformat()
+        if "created_at" in offre and offre["created_at"]:
+            if hasattr(offre["created_at"], 'isoformat'):
+                offre["created_at"] = offre["created_at"].isoformat()
+        if "updated_at" in offre and offre["updated_at"]:
+            if hasattr(offre["updated_at"], 'isoformat'):
+                offre["updated_at"] = offre["updated_at"].isoformat()
+        
+        return jsonify(offre), 200
+    except Exception as e:
+        print(f"ERROR: Erreur lors du debug de l'offre: {str(e)}")
+        return jsonify({"message": f"Erreur: {str(e)}"}), 500
 
 @app.route("/api/offres", methods=["POST"])
 @viewer_required
@@ -1720,8 +2021,6 @@ def add_offre():
         data = request.get_json()
         if not data:
             return jsonify({"message": "Données manquantes"}), 400
-        
-        print(f"DEBUG: Données reçues pour création d'offre: {data}")
         
         # Récupérer l'utilisateur actuel
         current_user = getattr(request, 'current_user', None)
@@ -1755,26 +2054,24 @@ def add_offre():
             return jsonify({"message": "Date limite invalide"}), 400
         
         # Validations optionnelles
-        # # Validation du statut (commenté car géré dynamiquement en frontend)
-        # if "statut" in data and not validate_offre_statut(data["statut"]):
-        #     return jsonify({"message": "Statut invalide. Doit être: Non préparé, En préparation, ou Envoyée"}), 400
+        if "statut" in data and not validate_offre_statut(data["statut"]):
+            return jsonify({"message": "Statut invalide. Doit être: Non préparé, En préparation, ou Envoyée"}), 400
         
         if "documents" in data and not validate_offre_documents(data["documents"]):
             return jsonify({"message": "Format des documents invalide"}), 400
         
         if "note_commentaire" in data and not validate_note_commentaire(data["note_commentaire"]):
             return jsonify({"message": "Format de la note/commentaire invalide"}), 400
-
-                # Validations pour les nouveaux champs
+        
+        # Validations pour les nouveaux champs
         if "Catégorie" in data and not validate_offre_categorie(data["Catégorie"]):
-            return jsonify({"message": "Catégorie invalide. Doit être: national, international"}), 400
+            return jsonify({"message": "Catégorie invalide. Doit être: national, international, local"}), 400
         
         if "N-Offre" in data and not validate_offre_numero(data["N-Offre"]):
             return jsonify({"message": "Numéro d'offre invalide"}), 400
         
         if "Partenaire" in data and not validate_offre_partenaire(data["Partenaire"]):
             return jsonify({"message": "Partenaire invalide"}), 400
-    
         
         # Créer l'offre
         from datetime import datetime
@@ -1787,14 +2084,12 @@ def add_offre():
             "responsable_id": ObjectId(user_id),
             "note_commentaire": data.get("note_commentaire", ""),
             "documents": data.get("documents", []),
-            "Catégorie": data.get("Catégorie", ""),  # Nom original
-            "N-Offre": data.get("N-Offre", ""),      # Nom original
-            "Partenaire": data.get("Partenaire", ""), # Nom original
+            "Catégorie": data.get("Catégorie", ""),
+            "N-Offre": data.get("N-Offre", ""),
+            "Partenaire": data.get("Partenaire", ""),
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow()
         }
-        
-        print(f"DEBUG: Création d'offre avec données: {offre}")
         
         result = offres_col.insert_one(offre)
         offre["_id"] = str(result.inserted_id)
@@ -1833,14 +2128,6 @@ def get_offre(offre_id):
         else:
             offre["est_mienne"] = False
         
-        # Mapping des nouveaux champs pour compatibilité
-        if "Catégorie" in offre:
-            offre["categorie"] = offre["Catégorie"]
-        if "N-Offre" in offre:
-            offre["numero"] = offre["N-Offre"]
-        if "Partenaire" in offre:
-            offre["partenaire"] = offre["Partenaire"]
-        
         return jsonify(offre), 200
     except Exception as e:
         return jsonify({"message": f"Erreur lors de la récupération de l'offre: {str(e)}"}), 500
@@ -1853,9 +2140,6 @@ def update_offre(offre_id):
         data = request.get_json()
         if not data:
             return jsonify({"message": "Données manquantes"}), 400
-        
-        print(f"DEBUG: Données reçues pour modification d'offre {offre_id}: {data}")
-        print(f"DEBUG: Clés présentes dans data: {list(data.keys())}")
         
         # Récupérer l'utilisateur actuel
         current_user = getattr(request, 'current_user', None)
@@ -1903,9 +2187,8 @@ def update_offre(offre_id):
             update_data["date_limite"] = datetime.fromisoformat(data["date_limite"].replace('Z', '+00:00'))
         
         if "statut" in data:
-            # # Validation du statut (commenté car géré dynamiquement en frontend)
-            # if not validate_offre_statut(data["statut"]):
-            #     return jsonify({"message": "Statut invalide. Doit être: Non préparé, En préparation, ou Envoyée"}), 400
+            if not validate_offre_statut(data["statut"]):
+                return jsonify({"message": "Statut invalide. Doit être: Non préparé, En préparation, ou Envoyée"}), 400
             update_data["statut"] = data["statut"]
         
         if "note_commentaire" in data:
@@ -1918,41 +2201,21 @@ def update_offre(offre_id):
                 return jsonify({"message": "Format des documents invalide"}), 400
             update_data["documents"] = data["documents"]
         
-        # Gestion des nouveaux champs - toujours mettre à jour même si vides
-        print(f"DEBUG: Vérification des nouveaux champs...")
-        print(f"DEBUG: 'Catégorie' in data: {'Catégorie' in data}")
-        print(f"DEBUG: 'N-Offre' in data: {'N-Offre' in data}")
-        print(f"DEBUG: 'Partenaire' in data: {'Partenaire' in data}")
-        
-        # Toujours mettre à jour les nouveaux champs, même s'ils sont vides
+        # Validation et mise à jour des nouveaux champs
         if "Catégorie" in data:
-            print(f"DEBUG: Catégorie trouvée: '{data['Catégorie']}'")
             if not validate_offre_categorie(data["Catégorie"]):
-                return jsonify({"message": "Catégorie invalide. Doit être: nationale, internationale"}), 400
-            # Mettre à jour avec les deux noms pour compatibilité
-            update_data["Catégorie"] = data["Catégorie"]  # Nom original
-            update_data["categorie"] = data["Catégorie"]  # Nom mappé
-            print(f"DEBUG: Catégorie ajoutée à update_data: '{data['Catégorie']}'")
+                return jsonify({"message": "Catégorie invalide. Doit être: national, international, local, ou regional"}), 400
+            update_data["Catégorie"] = data["Catégorie"]
         
         if "N-Offre" in data:
-            print(f"DEBUG: N-Offre trouvé: '{data['N-Offre']}'")
             if not validate_offre_numero(data["N-Offre"]):
                 return jsonify({"message": "Numéro d'offre invalide"}), 400
-            # Mettre à jour avec les deux noms pour compatibilité
-            update_data["N-Offre"] = data["N-Offre"]  # Nom original
-            update_data["numero"] = data["N-Offre"]  # Nom mappé
-            print(f"DEBUG: N-Offre ajouté à update_data: '{data['N-Offre']}'")
+            update_data["N-Offre"] = data["N-Offre"]
         
         if "Partenaire" in data:
-            print(f"DEBUG: Partenaire trouvé: '{data['Partenaire']}'")
             if not validate_offre_partenaire(data["Partenaire"]):
                 return jsonify({"message": "Partenaire invalide"}), 400
-            # Mettre à jour avec les deux noms pour compatibilité
-            update_data["Partenaire"] = data["Partenaire"]  # Nom original
-            update_data["partenaire"] = data["Partenaire"]  # Nom mappé
-            print(f"DEBUG: Partenaire ajouté à update_data: '{data['Partenaire']}'")
-        
-        print(f"DEBUG: Données de mise à jour préparées: {update_data}")
+            update_data["Partenaire"] = data["Partenaire"]
         
         # Gestion du responsable_id (seul l'admin peut réassigner)
         if "responsable_id" in data:
@@ -1969,8 +2232,6 @@ def update_offre(offre_id):
             {"_id": ObjectId(offre_id)},
             {"$set": update_data}
         )
-        
-        print(f"DEBUG: Résultat de la mise à jour - modified_count: {result.modified_count}")
         
         if result.modified_count > 0:
             return jsonify({"message": "Offre mise à jour avec succès"}), 200
@@ -2061,363 +2322,16 @@ def test_offres_connection():
         # Compter les éléments
         count = offres_col.count_documents({})
         
-        # Récupérer quelques offres pour debug
-        sample_offres = list(offres_col.find().limit(3))
-        for offre in sample_offres:
-            offre["_id"] = str(offre["_id"])
-            if "responsable_id" in offre:
-                offre["responsable_id"] = str(offre["responsable_id"])
-        
         return jsonify({
             "status": "Offres OK",
             "message": f"Connexion à la collection offres réussie. {count} offres trouvées.",
-            "count": count,
-            "sample_offres": sample_offres
+            "count": count
         }), 200
     except Exception as e:
         return jsonify({
             "status": "Offres Error",
             "message": f"Erreur de connexion à la collection offres: {str(e)}"
         }), 500
-
-@app.route("/api/test-update-offre/<offre_id>", methods=["PUT"])
-def test_update_offre(offre_id):
-    """Test de mise à jour d'offre avec les nouveaux champs"""
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"message": "Données manquantes"}), 400
-        
-        print(f"DEBUG TEST: Mise à jour de l'offre {offre_id} avec: {data}")
-        
-        # Préparer les données de mise à jour
-        update_data = {}
-        
-        # Gestion des nouveaux champs
-        if "Catégorie" in data:
-            update_data["categorie"] = data["Catégorie"]
-        
-        if "N-Offre" in data:
-            update_data["numero"] = data["N-Offre"]
-        
-        if "Partenaire" in data:
-            update_data["partenaire"] = data["Partenaire"]
-        
-        update_data["updated_at"] = datetime.utcnow()
-        
-        print(f"DEBUG TEST: Données de mise à jour: {update_data}")
-        
-        # Mettre à jour l'offre
-        result = offres_col.update_one(
-            {"_id": ObjectId(offre_id)},
-            {"$set": update_data}
-        )
-        
-        print(f"DEBUG TEST: Résultat - modified_count: {result.modified_count}")
-        
-        # Récupérer l'offre mise à jour
-        updated_offre = offres_col.find_one({"_id": ObjectId(offre_id)})
-        if updated_offre:
-            updated_offre["_id"] = str(updated_offre["_id"])
-            if "responsable_id" in updated_offre:
-                updated_offre["responsable_id"] = str(updated_offre["responsable_id"])
-        
-        return jsonify({
-            "message": "Test de mise à jour réussi",
-            "modified_count": result.modified_count,
-            "updated_offre": updated_offre
-        }), 200
-        
-    except Exception as e:
-        return jsonify({
-            "message": f"Erreur lors du test de mise à jour: {str(e)}"
-        }), 500
-        
-# ===========================================
-# GESTION DES DEVIS
-# ===========================================
-
-@app.route("/api/devis", methods=["GET"])
-@viewer_required
-def get_devis():
-    """Récupérer tous les devis (admin voit tout, utilisateur voit ses devis)"""
-    try:
-        # Récupérer l'utilisateur actuel
-        current_user = getattr(request, 'current_user', None)
-        user_id = current_user.get('user_id') if current_user else None
-        user_role = current_user.get('role') if current_user else None
-        
-        # Construire la requête
-        query = {}
-        if user_role == "user":
-            # L'utilisateur ne voit que ses propres devis
-            query["responsable_id"] = ObjectId(user_id)
-        
-        devis = list(devis_col.find(query).sort("created_at", -1))
-        
-        for devis_item in devis:
-            devis_item["_id"] = str(devis_item["_id"])
-            if "responsable_id" in devis_item:
-                devis_item["responsable_id"] = str(devis_item["responsable_id"])
-            if "offre_id" in devis_item:
-                devis_item["offre_id"] = str(devis_item["offre_id"])
-            if "client_id" in devis_item:
-                devis_item["client_id"] = str(devis_item["client_id"])
-            # Convertir les dates
-            if "date_emission" in devis_item and devis_item["date_emission"]:
-                if hasattr(devis_item["date_emission"], 'isoformat'):
-                    devis_item["date_emission"] = devis_item["date_emission"].isoformat()
-            if "created_at" in devis_item and devis_item["created_at"]:
-                if hasattr(devis_item["created_at"], 'isoformat'):
-                    devis_item["created_at"] = devis_item["created_at"].isoformat()
-            if "updated_at" in devis_item and devis_item["updated_at"]:
-                if hasattr(devis_item["updated_at"], 'isoformat'):
-                    devis_item["updated_at"] = devis_item["updated_at"].isoformat()
-            # S'assurer que les documents sont bien des arrays
-            if "document" in devis_item:
-                if isinstance(devis_item["document"], str):
-                    # Si c'est encore une string (ancien format), convertir en array
-                    devis_item["document"] = [devis_item["document"]] if devis_item["document"] else []
-                elif not isinstance(devis_item["document"], list):
-                    devis_item["document"] = []
-        
-        return jsonify(devis), 200
-    except Exception as e:
-        print(f"ERROR: Erreur lors de la récupération des devis: {str(e)}")
-        return jsonify([]), 200
-
-@app.route("/api/devis", methods=["POST"])
-@viewer_required
-def create_devis():
-    """Créer un nouveau devis"""
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"message": "Données manquantes"}), 400
-        
-        # Récupérer l'utilisateur actuel
-        current_user = getattr(request, 'current_user', None)
-        user_id = current_user.get('user_id') if current_user else None
-        user_role = current_user.get('role') if current_user else None
-        
-        if not user_id:
-            return jsonify({"message": "Utilisateur non identifié"}), 401
-        
-        # Vérifier les permissions de création
-        if user_role == "spectateur":
-            return jsonify({"message": "Accès refusé - Les spectateurs ne peuvent pas créer de devis"}), 403
-        
-        # Champs requis
-        required_fields = ["numero_devis", "intitule", "date_emission", "offre_id", "client_id", "etat"]
-        for field in required_fields:
-            if not data.get(field):
-                return jsonify({"message": f"Le champ {field} est requis"}), 400
-        
-        # Validations
-        if not data["numero_devis"] or not isinstance(data["numero_devis"], str) or len(data["numero_devis"].strip()) == 0:
-            return jsonify({"message": "Numéro de devis invalide"}), 400
-   
-        if not data["intitule"] or not isinstance(data["intitule"], str) or len(data["intitule"].strip()) == 0:
-            return jsonify({"message": "Intitulé invalide"}), 400
-        
-        # Vérifier la date d'émission
-        try:
-            datetime.fromisoformat(data["date_emission"].replace('Z', '+00:00'))
-        except (ValueError, TypeError):
-            return jsonify({"message": "Date d'émission invalide"}), 400
-        
-        # # Vérifier l'état (commenté car géré dynamiquement en frontend)
-        # valid_etats = ["Validé", "Transformé en facture"]
-        # if data["etat"] not in valid_etats:
-        #     return jsonify({"message": "État invalide. Doit être: Validé, Transformé en facture"}), 400
-        
-        # Vérifier que l'offre existe et récupérer ses données
-        offre = offres_col.find_one({"_id": ObjectId(data["offre_id"])})
-        if not offre:
-            return jsonify({"message": "Offre non trouvée"}), 400
-        
-        # Vérifier que le client existe et récupérer ses données
-        client = clients_col.find_one({"_id": ObjectId(data["client_id"])})
-        if not client:
-            return jsonify({"message": "Client non trouvé"}), 400
-        
-        # # Générer le numéro de devis automatiquement avec les noms
-        # nom_client = client.get("nom", "Client").replace(" ", "_")
-        # nom_offre = offre.get("titre", "Offre").replace(" ", "_")
-        # numero_devis = f"Dev_{nom_client}_{nom_offre}"
-        numero_devis = data["numero_devis"]
-
-        
-        # Validation du document (array d'URLs)
-        document = data.get("document", [])
-        if not validate_documents_array(document):
-            return jsonify({"message": "Format des documents invalide (doit être un array d'URLs)"}), 400
-
-        # Créer le devis
-        devis = {
-            "numero_devis": numero_devis,
-            "intitule": data["intitule"],
-            "responsable_id": ObjectId(user_id),
-            "date_emission": datetime.fromisoformat(data["date_emission"].replace('Z', '+00:00')),
-            "offre_id": ObjectId(data["offre_id"]),
-            "client_id": ObjectId(data["client_id"]),
-            "etat": data["etat"],
-            "document": document,  # Array d'URLs
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow()
-        }
-        
-        result = devis_col.insert_one(devis)
-        devis["_id"] = str(result.inserted_id)
-        devis["responsable_id"] = str(devis["responsable_id"])
-        devis["offre_id"] = str(devis["offre_id"])
-        devis["client_id"] = str(devis["client_id"])
-        
-        return jsonify({"message": "Devis créé avec succès", "devis": devis}), 201
-        
-    except Exception as e:
-        print(f"ERROR: Erreur lors de la création du devis: {str(e)}")
-        return jsonify({"message": f"Erreur lors de la création du devis: {str(e)}"}), 500
-
-@app.route("/api/devis/<devis_id>", methods=["GET"])
-@viewer_required
-def get_devis_by_id(devis_id):
-    """Récupérer un devis spécifique"""
-    try:
-        # Récupérer l'utilisateur actuel
-        current_user = getattr(request, 'current_user', None)
-        user_id = current_user.get('user_id') if current_user else None
-        user_role = current_user.get('role') if current_user else None
-        
-        # Construire la requête
-        query = {"_id": ObjectId(devis_id)}
-        if user_role == "user":
-            # L'utilisateur ne peut voir que ses propres devis
-            query["responsable_id"] = ObjectId(user_id)
-        
-        devis = devis_col.find_one(query)
-        if not devis:
-            return jsonify({"message": "Devis non trouvé"}), 404
-        
-        devis["_id"] = str(devis["_id"])
-        if "responsable_id" in devis:
-            devis["responsable_id"] = str(devis["responsable_id"])
-        if "offre_id" in devis:
-            devis["offre_id"] = str(devis["offre_id"])
-        if "client_id" in devis:
-            devis["client_id"] = str(devis["client_id"])
-        # S'assurer que les documents sont bien des arrays
-        if "document" in devis:
-            if isinstance(devis["document"], str):
-                # Si c'est encore une string (ancien format), convertir en array
-                devis["document"] = [devis["document"]] if devis["document"] else []
-            elif not isinstance(devis["document"], list):
-                devis["document"] = []
-        
-        return jsonify(devis), 200
-    except Exception as e:
-        return jsonify({"message": f"Erreur lors de la récupération du devis: {str(e)}"}), 500
-
-@app.route("/api/devis/<devis_id>", methods=["PUT"])
-@viewer_required
-def update_devis(devis_id):
-    """Modifier un devis"""
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"message": "Données manquantes"}), 400
-        
-        # Récupérer l'utilisateur actuel
-        current_user = getattr(request, 'current_user', None)
-        user_id = current_user.get('user_id') if current_user else None
-        user_role = current_user.get('role') if current_user else None
-        
-        # Vérifier les permissions de modification
-        if user_role == "spectateur":
-            return jsonify({"message": "Accès refusé - Les spectateurs ne peuvent pas modifier les devis"}), 403
-        
-        # Construire la requête pour vérifier l'existence
-        query = {"_id": ObjectId(devis_id)}
-        if user_role == "user":
-            # L'utilisateur ne peut modifier que ses propres devis
-            query["responsable_id"] = ObjectId(user_id)
-        
-        devis = devis_col.find_one(query)
-        if not devis:
-            return jsonify({"message": "Devis non trouvé"}), 404
-        
-        # Préparer les données à mettre à jour
-        update_data = {}
-        
-        if "intitule" in data:
-            if not data["intitule"] or not isinstance(data["intitule"], str) or len(data["intitule"].strip()) == 0:
-                return jsonify({"message": "Intitulé invalide"}), 400
-            update_data["intitule"] = data["intitule"]
-        
-        if "date_emission" in data:
-            try:
-                datetime.fromisoformat(data["date_emission"].replace('Z', '+00:00'))
-                update_data["date_emission"] = datetime.fromisoformat(data["date_emission"].replace('Z', '+00:00'))
-            except (ValueError, TypeError):
-                return jsonify({"message": "Date d'émission invalide"}), 400
-        
-        if "etat" in data:
-            # # Validation de l'état (commenté car géré dynamiquement en frontend)
-            # valid_etats = ["Validé", "Transformé en facture"]
-            # if data["etat"] not in valid_etats:
-            #     return jsonify({"message": "État invalide. Doit être: Validé, Transformé en facture"}), 400
-            update_data["etat"] = data["etat"]
-        
-        if "document" in data:
-            if not validate_documents_array(data["document"]):
-                return jsonify({"message": "Format des documents invalide (doit être un array d'URLs)"}), 400
-            update_data["document"] = data["document"]
-        
-        update_data["updated_at"] = datetime.utcnow()
-        
-        # Mettre à jour le devis
-        result = devis_col.update_one(
-            {"_id": ObjectId(devis_id)},
-            {"$set": update_data}
-        )
-        
-        if result.modified_count > 0:
-            return jsonify({"message": "Devis mis à jour avec succès"}), 200
-        else:
-            return jsonify({"message": "Aucune modification effectuée"}), 200
-        
-    except Exception as e:
-        return jsonify({"message": f"Erreur lors de la mise à jour du devis: {str(e)}"}), 500
-
-@app.route("/api/devis/<devis_id>", methods=["DELETE"])
-@viewer_required
-def delete_devis(devis_id):
-    """Supprimer un devis"""
-    try:
-        # Récupérer l'utilisateur actuel
-        current_user = getattr(request, 'current_user', None)
-        user_id = current_user.get('user_id') if current_user else None
-        user_role = current_user.get('role') if current_user else None
-        
-        # Vérifier les permissions de suppression
-        if user_role == "spectateur":
-            return jsonify({"message": "Accès refusé - Les spectateurs ne peuvent pas supprimer les devis"}), 403
-        
-        # Construire la requête
-        query = {"_id": ObjectId(devis_id)}
-        if user_role == "user":
-            # L'utilisateur ne peut supprimer que ses propres devis
-            query["responsable_id"] = ObjectId(user_id)
-        
-        result = devis_col.delete_one(query)
-        
-        if result.deleted_count > 0:
-            return jsonify({"message": "Devis supprimé avec succès"}), 200
-        else:
-            return jsonify({"message": "Devis non trouvé"}), 404
-        
-    except Exception as e:
-        return jsonify({"message": f"Erreur lors de la suppression du devis: {str(e)}"}), 500
 
 # ===========================================
 # GESTION DES FACTURES
@@ -2426,20 +2340,9 @@ def delete_devis(devis_id):
 @app.route("/api/factures", methods=["GET"])
 @viewer_required
 def get_factures():
-    """Récupérer toutes les factures (admin voit tout, utilisateur voit ses factures)"""
+    """Récupérer toutes les factures"""
     try:
-        # Récupérer l'utilisateur actuel
-        current_user = getattr(request, 'current_user', None)
-        user_id = current_user.get('user_id') if current_user else None
-        user_role = current_user.get('role') if current_user else None
-        
-        # Construire la requête
-        query = {}
-        if user_role == "user":
-            # L'utilisateur ne voit que ses propres factures
-            query["responsable_id"] = ObjectId(user_id)
-        
-        factures = list(factures_col.find(query).sort("created_at", -1))
+        factures = list(factures_col.find().sort("created_at", -1))
         
         for facture in factures:
             facture["_id"] = str(facture["_id"])
@@ -2459,13 +2362,6 @@ def get_factures():
             if "updated_at" in facture and facture["updated_at"]:
                 if hasattr(facture["updated_at"], 'isoformat'):
                     facture["updated_at"] = facture["updated_at"].isoformat()
-            # S'assurer que les documents sont bien des arrays
-            if "document" in facture:
-                if isinstance(facture["document"], str):
-                    # Si c'est encore une string (ancien format), convertir en array
-                    facture["document"] = [facture["document"]] if facture["document"] else []
-                elif not isinstance(facture["document"], list):
-                    facture["document"] = []
         
         return jsonify(factures), 200
     except Exception as e:
@@ -2473,84 +2369,67 @@ def get_factures():
         return jsonify([]), 200
 
 @app.route("/api/factures", methods=["POST"])
-@viewer_required
+@admin_required
 def create_facture():
-    """Créer une nouvelle facture"""
+    """Créer une nouvelle facture (admin uniquement)"""
     try:
         data = request.get_json()
         if not data:
             return jsonify({"message": "Données manquantes"}), 400
         
-        # Récupérer l'utilisateur actuel
-        current_user = getattr(request, 'current_user', None)
-        user_id = current_user.get('user_id') if current_user else None
-        user_role = current_user.get('role') if current_user else None
-        
-        if not user_id:
-            return jsonify({"message": "Utilisateur non identifié"}), 401
-        
-        # Vérifier les permissions de création
-        if user_role == "spectateur":
-            return jsonify({"message": "Accès refusé - Les spectateurs ne peuvent pas créer de factures"}), 403
-        
-        # Champs requis
-        required_fields = ["numero_facture", "intitule", "date_emission", "offre_id", "client_id", "etat"]
+        # Validation des champs requis
+        required_fields = ["intitule", "responsable_id", "date_emission", "offre_id", "client_id"]
         for field in required_fields:
             if not data.get(field):
                 return jsonify({"message": f"Le champ {field} est requis"}), 400
         
         # Validations
-        if not data["numero_facture"] or not isinstance(data["numero_facture"], str) or len(data["numero_facture"].strip()) == 0:
-            return jsonify({"message": "Numéro de facture invalide"}), 400
-
-        if not data["intitule"] or not isinstance(data["intitule"], str) or len(data["intitule"].strip()) == 0:
+        if not validate_intitule(data["intitule"]):
             return jsonify({"message": "Intitulé invalide"}), 400
-        
-        # Vérifier la date d'émission
-        try:
-            datetime.fromisoformat(data["date_emission"].replace('Z', '+00:00'))
-        except (ValueError, TypeError):
+        if not validate_object_id(data["responsable_id"]):
+            return jsonify({"message": "ID responsable invalide"}), 400
+        if not validate_date_emission(data["date_emission"]):
             return jsonify({"message": "Date d'émission invalide"}), 400
+        if not validate_object_id(data["offre_id"]):
+            return jsonify({"message": "ID offre invalide"}), 400
+        if not validate_object_id(data["client_id"]):
+            return jsonify({"message": "ID client invalide"}), 400
         
-        # # Vérifier l'état
-        # valid_etats = ["A envoyer au client", "En attente de payement", "Payée"]
-        # if data["etat"] not in valid_etats:
-        #     return jsonify({"message": "État invalide. Doit être: A envoyer au client, En attente de payement, Payée"}), 400
+        # Validations optionnelles
+        etat = data.get("etat", "En attente de payement")
+        document = data.get("document", "")
         
-        # Nettoyer l'état (supprimer les espaces en début/fin)
-        if "etat" in data and data["etat"]:
-            data["etat"] = data["etat"].strip()
-        
-        # Vérifier que l'offre existe et récupérer ses données
-        offre = offres_col.find_one({"_id": ObjectId(data["offre_id"])})
-        if not offre:
-            return jsonify({"message": "Offre non trouvée"}), 400
-        
-        # Vérifier que le client existe et récupérer ses données
-        client = clients_col.find_one({"_id": ObjectId(data["client_id"])})
-        if not client:
-            return jsonify({"message": "Client non trouvé"}), 400
-        
-        # # Générer le numéro de facture automatiquement avec les noms
-        # nom_client = client.get("nom", "Client").replace(" ", "_")
-        # nom_offre = offre.get("titre", "Offre").replace(" ", "_")
-        # numero_facture = f"Fac_{nom_client}_{nom_offre}"
-        numero_facture = data["numero_facture"]
-        # Validation du document (array d'URLs)
-        document = data.get("document", [])
+        if not validate_etat_facture(etat):
+            return jsonify({"message": "État invalide. Doit être: A envoyer au client, En attente de payement, ou Payée"}), 400
         if not validate_documents_array(document):
             return jsonify({"message": "Format des documents invalide (doit être un array d'URLs)"}), 400
-
+        
+        # Récupérer les informations pour générer le numéro
+        client = clients_col.find_one({"_id": ObjectId(data["client_id"])})
+        offre = offres_col.find_one({"_id": ObjectId(data["offre_id"])})
+        
+        client_name = ""
+        offre_name = ""
+        
+        if client:
+            client_name = client.get("raison_sociale", "") or client.get("nom_prenom", "")
+        
+        if offre:
+            offre_name = offre.get("intitulee", "")
+        
+        # Générer le numéro de facture automatiquement avec le nouveau format
+        numero_facture = generate_numero_facture(client_name, offre_name)
+        
         # Créer la facture
         facture = {
             "numero_facture": numero_facture,
             "intitule": data["intitule"],
-            "responsable_id": ObjectId(user_id),
+            "responsable_id": ObjectId(data["responsable_id"]),
             "date_emission": datetime.fromisoformat(data["date_emission"].replace('Z', '+00:00')),
             "offre_id": ObjectId(data["offre_id"]),
             "client_id": ObjectId(data["client_id"]),
-            "etat": data["etat"],
-            "document": document,  # Array d'URLs
+            "etat": etat,
+            "document": document,
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow()
         }
@@ -2564,26 +2443,14 @@ def create_facture():
         return jsonify({"message": "Facture créée avec succès", "facture": facture}), 201
         
     except Exception as e:
-        print(f"ERROR: Erreur lors de la création de la facture: {str(e)}")
         return jsonify({"message": f"Erreur lors de la création de la facture: {str(e)}"}), 500
 
 @app.route("/api/factures/<facture_id>", methods=["GET"])
 @viewer_required
-def get_facture_by_id(facture_id):
+def get_facture(facture_id):
     """Récupérer une facture spécifique"""
     try:
-        # Récupérer l'utilisateur actuel
-        current_user = getattr(request, 'current_user', None)
-        user_id = current_user.get('user_id') if current_user else None
-        user_role = current_user.get('role') if current_user else None
-        
-        # Construire la requête
-        query = {"_id": ObjectId(facture_id)}
-        if user_role == "user":
-            # L'utilisateur ne peut voir que ses propres factures
-            query["responsable_id"] = ObjectId(user_id)
-        
-        facture = factures_col.find_one(query)
+        facture = factures_col.find_one({"_id": ObjectId(facture_id)})
         if not facture:
             return jsonify({"message": "Facture non trouvée"}), 404
         
@@ -2594,43 +2461,22 @@ def get_facture_by_id(facture_id):
             facture["offre_id"] = str(facture["offre_id"])
         if "client_id" in facture:
             facture["client_id"] = str(facture["client_id"])
-        # S'assurer que les documents sont bien des arrays
-        if "document" in facture:
-            if isinstance(facture["document"], str):
-                # Si c'est encore une string (ancien format), convertir en array
-                facture["document"] = [facture["document"]] if facture["document"] else []
-            elif not isinstance(facture["document"], list):
-                facture["document"] = []
         
         return jsonify(facture), 200
     except Exception as e:
         return jsonify({"message": f"Erreur lors de la récupération de la facture: {str(e)}"}), 500
 
 @app.route("/api/factures/<facture_id>", methods=["PUT"])
-@viewer_required
+@admin_required
 def update_facture(facture_id):
-    """Modifier une facture"""
+    """Modifier une facture (admin uniquement)"""
     try:
         data = request.get_json()
         if not data:
             return jsonify({"message": "Données manquantes"}), 400
         
-        # Récupérer l'utilisateur actuel
-        current_user = getattr(request, 'current_user', None)
-        user_id = current_user.get('user_id') if current_user else None
-        user_role = current_user.get('role') if current_user else None
-        
-        # Vérifier les permissions de modification
-        if user_role == "spectateur":
-            return jsonify({"message": "Accès refusé - Les spectateurs ne peuvent pas modifier les factures"}), 403
-        
-        # Construire la requête pour vérifier l'existence
-        query = {"_id": ObjectId(facture_id)}
-        if user_role == "user":
-            # L'utilisateur ne peut modifier que ses propres factures
-            query["responsable_id"] = ObjectId(user_id)
-        
-        facture = factures_col.find_one(query)
+        # Vérifier que la facture existe
+        facture = factures_col.find_one({"_id": ObjectId(facture_id)})
         if not facture:
             return jsonify({"message": "Facture non trouvée"}), 404
         
@@ -2638,24 +2484,33 @@ def update_facture(facture_id):
         update_data = {}
         
         if "intitule" in data:
-            if not data["intitule"] or not isinstance(data["intitule"], str) or len(data["intitule"].strip()) == 0:
+            if not validate_intitule(data["intitule"]):
                 return jsonify({"message": "Intitulé invalide"}), 400
             update_data["intitule"] = data["intitule"]
         
+        if "responsable_id" in data:
+            if not validate_object_id(data["responsable_id"]):
+                return jsonify({"message": "ID responsable invalide"}), 400
+            update_data["responsable_id"] = ObjectId(data["responsable_id"])
+        
         if "date_emission" in data:
-            try:
-                datetime.fromisoformat(data["date_emission"].replace('Z', '+00:00'))
-                update_data["date_emission"] = datetime.fromisoformat(data["date_emission"].replace('Z', '+00:00'))
-            except (ValueError, TypeError):
+            if not validate_date_emission(data["date_emission"]):
                 return jsonify({"message": "Date d'émission invalide"}), 400
+            update_data["date_emission"] = datetime.fromisoformat(data["date_emission"].replace('Z', '+00:00'))
+        
+        if "offre_id" in data:
+            if not validate_object_id(data["offre_id"]):
+                return jsonify({"message": "ID offre invalide"}), 400
+            update_data["offre_id"] = ObjectId(data["offre_id"])
+        
+        if "client_id" in data:
+            if not validate_object_id(data["client_id"]):
+                return jsonify({"message": "ID client invalide"}), 400
+            update_data["client_id"] = ObjectId(data["client_id"])
         
         if "etat" in data:
-            # # Validation de l'état (commenté car géré dynamiquement en frontend)
-            # valid_etats = ["A envoyer au client", "En attente de payement", "Payée"]
-            # if data["etat"] not in valid_etats:
-            #     return jsonify({"message": "État invalide. Doit être: A envoyer au client, En attente de payement, Payée"}), 400
-            # Nettoyer l'état (supprimer les espaces en début/fin)
-            data["etat"] = data["etat"].strip()
+            if not validate_etat_facture(data["etat"]):
+                return jsonify({"message": "État invalide. Doit être: A envoyer au client, En attente de payement, ou Payée"}), 400
             update_data["etat"] = data["etat"]
         
         if "document" in data:
@@ -2675,80 +2530,825 @@ def update_facture(facture_id):
             return jsonify({"message": "Facture mise à jour avec succès"}), 200
         else:
             return jsonify({"message": "Aucune modification effectuée"}), 200
-        
+            
     except Exception as e:
         return jsonify({"message": f"Erreur lors de la mise à jour de la facture: {str(e)}"}), 500
 
 @app.route("/api/factures/<facture_id>", methods=["DELETE"])
-@viewer_required
+@admin_required
 def delete_facture(facture_id):
-    """Supprimer une facture"""
+    """Supprimer une facture (admin uniquement)"""
     try:
-        # Récupérer l'utilisateur actuel
-        current_user = getattr(request, 'current_user', None)
-        user_id = current_user.get('user_id') if current_user else None
-        user_role = current_user.get('role') if current_user else None
-        
-        # Vérifier les permissions de suppression
-        if user_role == "spectateur":
-            return jsonify({"message": "Accès refusé - Les spectateurs ne peuvent pas supprimer les factures"}), 403
-        
-        # Construire la requête
-        query = {"_id": ObjectId(facture_id)}
-        if user_role == "user":
-            # L'utilisateur ne peut supprimer que ses propres factures
-            query["responsable_id"] = ObjectId(user_id)
-        
-        result = factures_col.delete_one(query)
+        result = factures_col.delete_one({"_id": ObjectId(facture_id)})
         
         if result.deleted_count > 0:
             return jsonify({"message": "Facture supprimée avec succès"}), 200
         else:
             return jsonify({"message": "Facture non trouvée"}), 404
-        
+            
     except Exception as e:
         return jsonify({"message": f"Erreur lors de la suppression de la facture: {str(e)}"}), 500
 
 # ===========================================
-# ROUTES UTILITAIRES POUR LE FRONTEND
+# GESTION DES DEVIS
 # ===========================================
 
-@app.route("/api/devis/etats", methods=["GET"])
+@app.route("/api/devis", methods=["GET"])
 @viewer_required
-def get_devis_etats():
-    """Récupérer les états possibles pour les devis"""
-    return jsonify(["Validé", "Transformé en facture"]), 200
+def get_devis():
+    """Récupérer tous les devis avec informations liées"""
+    try:
+        devis_list = list(devis_col.find().sort("created_at", -1))
+        
+        for devis in devis_list:
+            devis["_id"] = str(devis["_id"])
+            
+            # Récupérer les informations du responsable
+            if "responsable_id" in devis:
+                responsable = personnels_col.find_one({"_id": devis["responsable_id"]})
+                devis["responsable_id"] = str(devis["responsable_id"])
+                devis["responsable_nom"] = responsable.get("nom_prenom", "") if responsable else ""
+                devis["responsable_email"] = responsable.get("email", "") if responsable else ""
+            
+            # Récupérer les informations de l'offre avec N-Offre
+            if "offre_id" in devis:
+                offre = offres_col.find_one({"_id": devis["offre_id"]})
+                devis["offre_id"] = str(devis["offre_id"])
+                if offre:
+                    devis["offre_intitulee"] = offre.get("intitulee", "")
+                    devis["offre_n_offre"] = offre.get("N-Offre", "")  # Champ N-Offre récupéré
+                    devis["offre_categorie"] = offre.get("Catégorie", "")
+                    devis["offre_partenaire"] = offre.get("Partenaire", "")
+                else:
+                    devis["offre_intitulee"] = ""
+                    devis["offre_n_offre"] = ""
+                    devis["offre_categorie"] = ""
+                    devis["offre_partenaire"] = ""
+            
+            # Récupérer les informations du client
+            if "client_id" in devis:
+                client = clients_col.find_one({"_id": devis["client_id"]})
+                devis["client_id"] = str(devis["client_id"])
+                if client:
+                    devis["client_nom"] = client.get("raison_sociale", "") or client.get("nom_prenom", "")
+                    devis["client_email"] = client.get("email", "")
+                    devis["client_telephone"] = client.get("telephone", "")
+                else:
+                    devis["client_nom"] = ""
+                    devis["client_email"] = ""
+                    devis["client_telephone"] = ""
+            
+            # Convertir les dates
+            if "date_emission" in devis and devis["date_emission"]:
+                if hasattr(devis["date_emission"], 'isoformat'):
+                    devis["date_emission"] = devis["date_emission"].isoformat()
+            if "created_at" in devis and devis["created_at"]:
+                if hasattr(devis["created_at"], 'isoformat'):
+                    devis["created_at"] = devis["created_at"].isoformat()
+            if "updated_at" in devis and devis["updated_at"]:
+                if hasattr(devis["updated_at"], 'isoformat'):
+                    devis["updated_at"] = devis["updated_at"].isoformat()
+        
+        return jsonify(devis_list), 200
+    except Exception as e:
+        print(f"ERROR: Erreur lors de la récupération des devis: {str(e)}")
+        return jsonify([]), 200
 
-@app.route("/api/factures/etats", methods=["GET"])
+@app.route("/api/devis", methods=["POST"])
 @viewer_required
-def get_factures_etats():
-    """Récupérer les états possibles pour les factures"""
-    return jsonify(["A envoyer au client", "En attente de payement", "Payée"]), 200
+def create_devis():
+    """Créer un nouveau devis (utilisateurs peuvent créer pour leurs offres)"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"message": "Données manquantes"}), 400
+        
+        # Validation des champs requis
+        required_fields = ["intitule", "responsable_id", "date_emission", "offre_id", "client_id"]
+        for field in required_fields:
+            if not data.get(field):
+                return jsonify({"message": f"Le champ {field} est requis"}), 400
+        
+        # Validations
+        if not validate_intitule(data["intitule"]):
+            return jsonify({"message": "Intitulé invalide"}), 400
+        if not validate_object_id(data["responsable_id"]):
+            return jsonify({"message": "ID responsable invalide"}), 400
+        if not validate_date_emission(data["date_emission"]):
+            return jsonify({"message": "Date d'émission invalide"}), 400
+        if not validate_object_id(data["offre_id"]):
+            return jsonify({"message": "ID offre invalide"}), 400
+        if not validate_object_id(data["client_id"]):
+            return jsonify({"message": "ID client invalide"}), 400
+        
+        # Vérifier que l'utilisateur peut créer un devis pour cette offre
+        user_id = get_jwt_identity()
+        user = users_col.find_one({"_id": ObjectId(user_id)})
+        
+        if user and user.get("role") != "admin":
+            # Pour les utilisateurs normaux, vérifier qu'ils sont responsables de l'offre
+            offre_check = offres_col.find_one({"_id": ObjectId(data["offre_id"])})
+            if not offre_check:
+                return jsonify({"message": "Offre non trouvée"}), 404
+            
+            # Vérifier que l'utilisateur est le responsable de cette offre
+            personnel = personnels_col.find_one({"email": user.get("email")})
+            if not personnel or str(offre_check.get("responsable_id")) != str(personnel["_id"]):
+                return jsonify({"message": "Vous ne pouvez créer des devis que pour vos propres offres"}), 403
+        
+        # Validations optionnelles
+        etat = data.get("etat", "Validé")
+        document = data.get("document", "")
+        
+        if not validate_etat_devis(etat):
+            return jsonify({"message": "État invalide. Doit être: Validé ou Transformé en facture"}), 400
+        if not validate_documents_array(document):
+            return jsonify({"message": "Format des documents invalide (doit être un array d'URLs)"}), 400
+        
+        # Récupérer les informations pour générer le numéro
+        client = clients_col.find_one({"_id": ObjectId(data["client_id"])})
+        offre = offres_col.find_one({"_id": ObjectId(data["offre_id"])})
+        
+        client_name = ""
+        offre_name = ""
+        
+        if client:
+            client_name = client.get("raison_sociale", "") or client.get("nom_prenom", "")
+        
+        if offre:
+            offre_name = offre.get("intitulee", "")
+        
+        # Générer le numéro de devis automatiquement avec le nouveau format
+        numero_devis = generate_numero_devis(client_name, offre_name)
+        
+        # Créer le devis
+        devis = {
+            "numero_devis": numero_devis,
+            "intitule": data["intitule"],
+            "responsable_id": ObjectId(data["responsable_id"]),
+            "date_emission": datetime.fromisoformat(data["date_emission"].replace('Z', '+00:00')),
+            "offre_id": ObjectId(data["offre_id"]),
+            "client_id": ObjectId(data["client_id"]),
+            "etat": etat,
+            "document": document,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
+        }
+        
+        result = devis_col.insert_one(devis)
+        devis["_id"] = str(result.inserted_id)
+        devis["responsable_id"] = str(devis["responsable_id"])
+        devis["offre_id"] = str(devis["offre_id"])
+        devis["client_id"] = str(devis["client_id"])
+        
+        return jsonify({"message": "Devis créé avec succès", "devis": devis}), 201
+        
+    except Exception as e:
+        return jsonify({"message": f"Erreur lors de la création du devis: {str(e)}"}), 500
+
+@app.route("/api/devis/<devis_id>", methods=["GET"])
+@viewer_required
+def get_devis_by_id(devis_id):
+    """Récupérer un devis spécifique avec informations liées"""
+    try:
+        devis = devis_col.find_one({"_id": ObjectId(devis_id)})
+        if not devis:
+            return jsonify({"message": "Devis non trouvé"}), 404
+        
+        devis["_id"] = str(devis["_id"])
+        
+        # Récupérer les informations du responsable
+        if "responsable_id" in devis:
+            responsable = personnels_col.find_one({"_id": devis["responsable_id"]})
+            devis["responsable_id"] = str(devis["responsable_id"])
+            devis["responsable_nom"] = responsable.get("nom_prenom", "") if responsable else ""
+            devis["responsable_email"] = responsable.get("email", "") if responsable else ""
+        
+        # Récupérer les informations de l'offre avec N-Offre
+        if "offre_id" in devis:
+            offre = offres_col.find_one({"_id": devis["offre_id"]})
+            devis["offre_id"] = str(devis["offre_id"])
+            if offre:
+                devis["offre_intitulee"] = offre.get("intitulee", "")
+                devis["offre_n_offre"] = offre.get("N-Offre", "")  # Champ N-Offre récupéré
+                devis["offre_categorie"] = offre.get("Catégorie", "")
+                devis["offre_partenaire"] = offre.get("Partenaire", "")
+            else:
+                devis["offre_intitulee"] = ""
+                devis["offre_n_offre"] = ""
+                devis["offre_categorie"] = ""
+                devis["offre_partenaire"] = ""
+        
+        # Récupérer les informations du client
+        if "client_id" in devis:
+            client = clients_col.find_one({"_id": devis["client_id"]})
+            devis["client_id"] = str(devis["client_id"])
+            if client:
+                devis["client_nom"] = client.get("raison_sociale", "") or client.get("nom_prenom", "")
+                devis["client_email"] = client.get("email", "")
+                devis["client_telephone"] = client.get("telephone", "")
+            else:
+                devis["client_nom"] = ""
+                devis["client_email"] = ""
+                devis["client_telephone"] = ""
+        
+        # Convertir les dates
+        if "date_emission" in devis and devis["date_emission"]:
+            if hasattr(devis["date_emission"], 'isoformat'):
+                devis["date_emission"] = devis["date_emission"].isoformat()
+        if "created_at" in devis and devis["created_at"]:
+            if hasattr(devis["created_at"], 'isoformat'):
+                devis["created_at"] = devis["created_at"].isoformat()
+        if "updated_at" in devis and devis["updated_at"]:
+            if hasattr(devis["updated_at"], 'isoformat'):
+                devis["updated_at"] = devis["updated_at"].isoformat()
+        
+        return jsonify(devis), 200
+    except Exception as e:
+        return jsonify({"message": f"Erreur lors de la récupération du devis: {str(e)}"}), 500
+
+@app.route("/api/devis/<devis_id>", methods=["PUT"])
+@admin_required
+def update_devis(devis_id):
+    """Modifier un devis (admin uniquement)"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"message": "Données manquantes"}), 400
+        
+        # Vérifier que le devis existe
+        devis = devis_col.find_one({"_id": ObjectId(devis_id)})
+        if not devis:
+            return jsonify({"message": "Devis non trouvé"}), 404
+        
+        # Préparer les données à mettre à jour
+        update_data = {}
+        
+        if "intitule" in data:
+            if not validate_intitule(data["intitule"]):
+                return jsonify({"message": "Intitulé invalide"}), 400
+            update_data["intitule"] = data["intitule"]
+        
+        if "responsable_id" in data:
+            if not validate_object_id(data["responsable_id"]):
+                return jsonify({"message": "ID responsable invalide"}), 400
+            update_data["responsable_id"] = ObjectId(data["responsable_id"])
+        
+        if "date_emission" in data:
+            if not validate_date_emission(data["date_emission"]):
+                return jsonify({"message": "Date d'émission invalide"}), 400
+            update_data["date_emission"] = datetime.fromisoformat(data["date_emission"].replace('Z', '+00:00'))
+        
+        if "offre_id" in data:
+            if not validate_object_id(data["offre_id"]):
+                return jsonify({"message": "ID offre invalide"}), 400
+            update_data["offre_id"] = ObjectId(data["offre_id"])
+        
+        if "client_id" in data:
+            if not validate_object_id(data["client_id"]):
+                return jsonify({"message": "ID client invalide"}), 400
+            update_data["client_id"] = ObjectId(data["client_id"])
+        
+        if "etat" in data:
+            if not validate_etat_devis(data["etat"]):
+                return jsonify({"message": "État invalide. Doit être: Validé ou Transformé en facture"}), 400
+            update_data["etat"] = data["etat"]
+        
+        if "document" in data:
+            if not validate_documents_array(data["document"]):
+                return jsonify({"message": "Format des documents invalide (doit être un array d'URLs)"}), 400
+            update_data["document"] = data["document"]
+        
+        update_data["updated_at"] = datetime.utcnow()
+        
+        # Mettre à jour le devis
+        result = devis_col.update_one(
+            {"_id": ObjectId(devis_id)},
+            {"$set": update_data}
+        )
+        
+        if result.modified_count > 0:
+            return jsonify({"message": "Devis mis à jour avec succès"}), 200
+        else:
+            return jsonify({"message": "Aucune modification effectuée"}), 200
+            
+    except Exception as e:
+        return jsonify({"message": f"Erreur lors de la mise à jour du devis: {str(e)}"}), 500
+
+@app.route("/api/devis/<devis_id>", methods=["DELETE"])
+@admin_required
+def delete_devis(devis_id):
+    """Supprimer un devis (admin uniquement)"""
+    try:
+        result = devis_col.delete_one({"_id": ObjectId(devis_id)})
+        
+        if result.deleted_count > 0:
+            return jsonify({"message": "Devis supprimé avec succès"}), 200
+        else:
+            return jsonify({"message": "Devis non trouvé"}), 404
+            
+    except Exception as e:
+        return jsonify({"message": f"Erreur lors de la suppression du devis: {str(e)}"}), 500
+
+# ===========================================
+# ROUTES HELPER POUR API.JS
+# ===========================================
+
+@app.route("/api/factures/stats", methods=["GET"])
+@viewer_required
+def get_factures_stats():
+    """Statistiques des factures pour dashboard"""
+    try:
+        stats = {
+            "total_factures": factures_col.count_documents({}),
+            "a_envoyer": factures_col.count_documents({"etat": "A envoyer au client"}),
+            "en_attente": factures_col.count_documents({"etat": "En attente de payement"}),
+            "payees": factures_col.count_documents({"etat": "Payée"})
+        }
+        
+        return jsonify(stats), 200
+    except Exception as e:
+        print(f"ERROR: Erreur lors de la récupération des statistiques factures: {str(e)}")
+        return jsonify({
+            "total_factures": 0,
+            "a_envoyer": 0,
+            "en_attente": 0,
+            "payees": 0
+        }), 200
+
+@app.route("/api/devis/stats", methods=["GET"])
+@viewer_required
+def get_devis_stats():
+    """Statistiques des devis pour dashboard"""
+    try:
+        stats = {
+            "total_devis": devis_col.count_documents({}),
+            "valides": devis_col.count_documents({"etat": "Validé"}),
+            "transformes": devis_col.count_documents({"etat": "Transformé en facture"})
+        }
+        
+        return jsonify(stats), 200
+    except Exception as e:
+        print(f"ERROR: Erreur lors de la récupération des statistiques devis: {str(e)}")
+        return jsonify({
+            "total_devis": 0,
+            "valides": 0,
+            "transformes": 0
+        }), 200
+
+@app.route("/api/factures/search", methods=["GET"])
+@viewer_required
+def search_factures():
+    """Recherche dans les factures"""
+    try:
+        # Paramètres de recherche
+        search_term = request.args.get("q", "")
+        etat = request.args.get("etat", "")
+        client_id = request.args.get("client_id", "")
+        responsable_id = request.args.get("responsable_id", "")
+        
+        # Construire la requête
+        query = {}
+        
+        if search_term:
+            query["$or"] = [
+                {"numero_facture": {"$regex": search_term, "$options": "i"}},
+                {"intitule": {"$regex": search_term, "$options": "i"}}
+            ]
+        
+        if etat:
+            query["etat"] = etat
+            
+        if client_id and validate_object_id(client_id):
+            query["client_id"] = ObjectId(client_id)
+            
+        if responsable_id and validate_object_id(responsable_id):
+            query["responsable_id"] = ObjectId(responsable_id)
+        
+        factures = list(factures_col.find(query).sort("created_at", -1).limit(50))
+        
+        for facture in factures:
+            facture["_id"] = str(facture["_id"])
+            if "responsable_id" in facture:
+                facture["responsable_id"] = str(facture["responsable_id"])
+            if "offre_id" in facture:
+                facture["offre_id"] = str(facture["offre_id"])
+            if "client_id" in facture:
+                facture["client_id"] = str(facture["client_id"])
+            # Convertir les dates
+            if "date_emission" in facture and facture["date_emission"]:
+                if hasattr(facture["date_emission"], 'isoformat'):
+                    facture["date_emission"] = facture["date_emission"].isoformat()
+            if "created_at" in facture and facture["created_at"]:
+                if hasattr(facture["created_at"], 'isoformat'):
+                    facture["created_at"] = facture["created_at"].isoformat()
+            if "updated_at" in facture and facture["updated_at"]:
+                if hasattr(facture["updated_at"], 'isoformat'):
+                    facture["updated_at"] = facture["updated_at"].isoformat()
+        
+        return jsonify(factures), 200
+    except Exception as e:
+        print(f"ERROR: Erreur lors de la recherche des factures: {str(e)}")
+        return jsonify([]), 200
+
+@app.route("/api/devis/search", methods=["GET"])
+@viewer_required
+def search_devis():
+    """Recherche dans les devis"""
+    try:
+        # Paramètres de recherche
+        search_term = request.args.get("q", "")
+        etat = request.args.get("etat", "")
+        client_id = request.args.get("client_id", "")
+        responsable_id = request.args.get("responsable_id", "")
+        
+        # Construire la requête
+        query = {}
+        
+        if search_term:
+            query["$or"] = [
+                {"numero_devis": {"$regex": search_term, "$options": "i"}},
+                {"intitule": {"$regex": search_term, "$options": "i"}}
+            ]
+        
+        if etat:
+            query["etat"] = etat
+            
+        if client_id and validate_object_id(client_id):
+            query["client_id"] = ObjectId(client_id)
+            
+        if responsable_id and validate_object_id(responsable_id):
+            query["responsable_id"] = ObjectId(responsable_id)
+        
+        devis_list = list(devis_col.find(query).sort("created_at", -1).limit(50))
+        
+        for devis in devis_list:
+            devis["_id"] = str(devis["_id"])
+            
+            # Récupérer les informations du responsable
+            if "responsable_id" in devis:
+                responsable = personnels_col.find_one({"_id": devis["responsable_id"]})
+                devis["responsable_id"] = str(devis["responsable_id"])
+                devis["responsable_nom"] = responsable.get("nom_prenom", "") if responsable else ""
+                devis["responsable_email"] = responsable.get("email", "") if responsable else ""
+            
+            # Récupérer les informations de l'offre avec N-Offre
+            if "offre_id" in devis:
+                offre = offres_col.find_one({"_id": devis["offre_id"]})
+                devis["offre_id"] = str(devis["offre_id"])
+                if offre:
+                    devis["offre_intitulee"] = offre.get("intitulee", "")
+                    devis["offre_n_offre"] = offre.get("N-Offre", "")  # Champ N-Offre récupéré
+                    devis["offre_categorie"] = offre.get("Catégorie", "")
+                    devis["offre_partenaire"] = offre.get("Partenaire", "")
+                else:
+                    devis["offre_intitulee"] = ""
+                    devis["offre_n_offre"] = ""
+                    devis["offre_categorie"] = ""
+                    devis["offre_partenaire"] = ""
+            
+            # Récupérer les informations du client
+            if "client_id" in devis:
+                client = clients_col.find_one({"_id": devis["client_id"]})
+                devis["client_id"] = str(devis["client_id"])
+                if client:
+                    devis["client_nom"] = client.get("raison_sociale", "") or client.get("nom_prenom", "")
+                    devis["client_email"] = client.get("email", "")
+                    devis["client_telephone"] = client.get("telephone", "")
+                else:
+                    devis["client_nom"] = ""
+                    devis["client_email"] = ""
+                    devis["client_telephone"] = ""
+            
+            # Convertir les dates
+            if "date_emission" in devis and devis["date_emission"]:
+                if hasattr(devis["date_emission"], 'isoformat'):
+                    devis["date_emission"] = devis["date_emission"].isoformat()
+            if "created_at" in devis and devis["created_at"]:
+                if hasattr(devis["created_at"], 'isoformat'):
+                    devis["created_at"] = devis["created_at"].isoformat()
+            if "updated_at" in devis and devis["updated_at"]:
+                if hasattr(devis["updated_at"], 'isoformat'):
+                    devis["updated_at"] = devis["updated_at"].isoformat()
+        
+        return jsonify(devis_list), 200
+    except Exception as e:
+        print(f"ERROR: Erreur lors de la recherche des devis: {str(e)}")
+        return jsonify([]), 200
+
+@app.route("/api/devis/<devis_id>/detailed", methods=["GET"])
+@viewer_required
+def get_devis_detailed(devis_id):
+    """Récupérer un devis avec toutes les informations détaillées pour l'affichage"""
+    try:
+        devis = devis_col.find_one({"_id": ObjectId(devis_id)})
+        if not devis:
+            return jsonify({"message": "Devis non trouvé"}), 404
+        
+        # Convertir l'ID principal
+        devis["_id"] = str(devis["_id"])
+        
+        # Récupérer les informations complètes du responsable
+        responsable_info = {}
+        if "responsable_id" in devis:
+            responsable = personnels_col.find_one({"_id": devis["responsable_id"]})
+            if responsable:
+                responsable_info = {
+                    "id": str(responsable["_id"]),
+                    "nom_prenom": responsable.get("nom_prenom", ""),
+                    "email": responsable.get("email", ""),
+                    "telephone": responsable.get("telephone", ""),
+                    "fonction": responsable.get("fonction", ""),
+                    "statut": responsable.get("statut", "")
+                }
+            devis["responsable_id"] = str(devis["responsable_id"])
+            devis["responsable"] = responsable_info
+        
+        # Récupérer les informations complètes de l'offre
+        offre_info = {}
+        if "offre_id" in devis:
+            offre = offres_col.find_one({"_id": devis["offre_id"]})
+            if offre:
+                offre_info = {
+                    "id": str(offre["_id"]),
+                    "intitulee": offre.get("intitulee", ""),
+                    "n_offre": offre.get("N-Offre", ""),  # Champ N-Offre
+                    "categorie": offre.get("Catégorie", ""),
+                    "partenaire": offre.get("Partenaire", ""),
+                    "client": offre.get("client", ""),
+                    "statut": offre.get("statut", ""),
+                    "date_limite": offre.get("date_limite", "").isoformat() if hasattr(offre.get("date_limite", ""), 'isoformat') else offre.get("date_limite", ""),
+                    "note_commentaire": offre.get("note_commentaire", "")
+                }
+            devis["offre_id"] = str(devis["offre_id"])
+            devis["offre"] = offre_info
+        
+        # Récupérer les informations complètes du client
+        client_info = {}
+        if "client_id" in devis:
+            client = clients_col.find_one({"_id": devis["client_id"]})
+            if client:
+                client_info = {
+                    "id": str(client["_id"]),
+                    "nom": client.get("raison_sociale", "") or client.get("nom_prenom", ""),
+                    "email": client.get("email", ""),
+                    "telephone": client.get("telephone", ""),
+                    "adresse": client.get("adresse", ""),
+                    "type": "entreprise" if client.get("raison_sociale") else "particulier"
+                }
+            devis["client_id"] = str(devis["client_id"])
+            devis["client"] = client_info
+        
+        # Convertir toutes les dates
+        if "date_emission" in devis and devis["date_emission"]:
+            if hasattr(devis["date_emission"], 'isoformat'):
+                devis["date_emission"] = devis["date_emission"].isoformat()
+        if "created_at" in devis and devis["created_at"]:
+            if hasattr(devis["created_at"], 'isoformat'):
+                devis["created_at"] = devis["created_at"].isoformat()
+        if "updated_at" in devis and devis["updated_at"]:
+            if hasattr(devis["updated_at"], 'isoformat'):
+                devis["updated_at"] = devis["updated_at"].isoformat()
+        
+        return jsonify(devis), 200
+    except Exception as e:
+        return jsonify({"message": f"Erreur lors de la récupération détaillée du devis: {str(e)}"}), 500
+
+@app.route("/api/references", methods=["GET"])
+@viewer_required
+def get_references():
+    """Récupérer toutes les données de référence pour les formulaires"""
+    try:
+        references = {}
+        
+        # Clients pour les dropdowns
+        clients = list(clients_col.find({}, {"_id": 1, "raison_sociale": 1, "nom_prenom": 1}).sort("raison_sociale", 1))
+        for client in clients:
+            client["_id"] = str(client["_id"])
+        references["clients"] = clients
+        
+        # Personnels pour les dropdowns
+        personnels = list(personnels_col.find({}, {"_id": 1, "nom_prenom": 1, "email": 1}).sort("nom_prenom", 1))
+        for personnel in personnels:
+            personnel["_id"] = str(personnel["_id"])
+        references["personnels"] = personnels
+        
+        # Offres pour les dropdowns (toutes les offres pour admin, celles du user pour les autres)
+        user_id = get_jwt_identity()
+        user = users_col.find_one({"_id": ObjectId(user_id)})
+        
+        if user and user.get("role") == "admin":
+            # Admin voit toutes les offres
+            offres = list(offres_col.find({}, {"_id": 1, "intitulee": 1, "client": 1, "N-Offre": 1, "Catégorie": 1, "statut": 1}).sort("intitulee", 1))
+        else:
+            # User normal voit seulement ses offres
+            personnel = personnels_col.find_one({"email": user.get("email")})
+            if personnel:
+                personnel_id = personnel["_id"]
+                offres = list(offres_col.find(
+                    {"responsable_id": personnel_id}, 
+                    {"_id": 1, "intitulee": 1, "client": 1, "N-Offre": 1, "Catégorie": 1, "statut": 1}
+                ).sort("intitulee", 1))
+            else:
+                offres = []
+        
+        for offre in offres:
+            offre["_id"] = str(offre["_id"])
+        references["offres"] = offres
+        
+        # États possibles
+        references["etats_facture"] = ["A envoyer au client", "En attente de payement", "Payée"]
+        references["etats_devis"] = ["Validé", "Transformé en facture"]
+        
+        # Catégories d'offres possibles
+        references["categories_offre"] = ["national", "international"]
+        
+        return jsonify(references), 200
+    except Exception as e:
+        print(f"ERROR: Erreur lors de la récupération des références: {str(e)}")
+        return jsonify({
+            "clients": [],
+            "personnels": [],
+            "offres": [],
+            "etats_facture": ["A envoyer au client", "En attente de payement", "Payée"],
+            "etats_devis": ["Validé", "Transformé en facture"],
+            "categories_offre": ["national", "international"]
+        }), 200
+
+@app.route("/api/my-offres", methods=["GET"])
+@viewer_required
+def get_my_offres():
+    """Récupérer les offres de l'utilisateur connecté pour les dropdowns"""
+    try:
+        user_id = get_jwt_identity()
+        user = users_col.find_one({"_id": ObjectId(user_id)})
+        
+        if not user:
+            return jsonify([]), 200
+        
+        # Récupérer les offres selon le rôle
+        if user.get("role") == "admin":
+            # Admin voit toutes les offres
+            offres = list(offres_col.find({}).sort("intitulee", 1))
+        else:
+            # User normal voit seulement ses offres
+            personnel = personnels_col.find_one({"email": user.get("email")})
+            if personnel:
+                personnel_id = personnel["_id"]
+                offres = list(offres_col.find({"responsable_id": personnel_id}).sort("intitulee", 1))
+            else:
+                return jsonify([]), 200
+        
+        # Formater les offres pour les dropdowns avec informations complètes
+        offres_formatted = []
+        for offre in offres:
+            offre_info = {
+                "_id": str(offre["_id"]),
+                "intitulee": offre.get("intitulee", ""),
+                "client": offre.get("client", ""),
+                "n_offre": offre.get("N-Offre", ""),
+                "categorie": offre.get("Catégorie", ""),
+                "partenaire": offre.get("Partenaire", ""),
+                "statut": offre.get("statut", ""),
+                "label": f"{offre.get('intitulee', '')} - {offre.get('client', '')} ({offre.get('N-Offre', 'N/A')})"
+            }
+            
+            # Ajouter la date limite formatée si elle existe
+            if "date_limite" in offre and offre["date_limite"]:
+                if hasattr(offre["date_limite"], 'isoformat'):
+                    offre_info["date_limite"] = offre["date_limite"].isoformat()
+                else:
+                    offre_info["date_limite"] = str(offre["date_limite"])
+            else:
+                offre_info["date_limite"] = ""
+            
+            offres_formatted.append(offre_info)
+        
+        return jsonify(offres_formatted), 200
+        
+    except Exception as e:
+        print(f"ERROR: Erreur lors de la récupération des offres utilisateur: {str(e)}")
+        return jsonify([]), 200
+
+@app.route("/api/form-defaults", methods=["GET"])
+@viewer_required
+def get_form_defaults():
+    """Récupérer les valeurs par défaut pour les formulaires basées sur l'utilisateur connecté"""
+    try:
+        user_id = get_jwt_identity()
+        user = users_col.find_one({"_id": ObjectId(user_id)})
+        
+        if not user:
+            return jsonify({"message": "Utilisateur non trouvé"}), 404
+        
+        # Récupérer les informations du personnel correspondant
+        personnel = personnels_col.find_one({"email": user.get("email")})
+        
+        defaults = {
+            "user_info": {
+                "id": str(user["_id"]),
+                "name": user.get("name", ""),
+                "email": user.get("email", ""),
+                "role": user.get("role", ""),
+                "fonction": user.get("Fonction", "")
+            },
+            "responsable_id": "",
+            "responsable_nom": "",
+            "is_admin": user.get("role") == "admin"
+        }
+        
+        # Si l'utilisateur a un profil personnel correspondant
+        if personnel:
+            defaults["responsable_id"] = str(personnel["_id"])
+            defaults["responsable_nom"] = personnel.get("nom_prenom", "")
+        
+        # Pour les admins, ne pas pré-remplir le responsable (ils peuvent choisir)
+        if user.get("role") == "admin":
+            defaults["responsable_id"] = ""
+            defaults["responsable_nom"] = "Sélectionner un responsable"
+        
+        return jsonify(defaults), 200
+        
+    except Exception as e:
+        print(f"ERROR: Erreur lors de la récupération des valeurs par défaut: {str(e)}")
+        return jsonify({
+            "user_info": {},
+            "responsable_id": "",
+            "responsable_nom": "",
+            "is_admin": False
+        }), 200
+
+@app.route("/api/factures/<facture_id>/change-etat", methods=["PATCH"])
+@admin_required
+def change_facture_etat(facture_id):
+    """Changer rapidement l'état d'une facture"""
+    try:
+        data = request.get_json()
+        if not data or "etat" not in data:
+            return jsonify({"message": "Nouvel état requis"}), 400
+        
+        # Valider l'état
+        if not validate_etat_facture(data["etat"]):
+            return jsonify({"message": "État invalide. Doit être: A envoyer au client, En attente de payement, ou Payée"}), 400
+        
+        # Vérifier que la facture existe
+        facture = factures_col.find_one({"_id": ObjectId(facture_id)})
+        if not facture:
+            return jsonify({"message": "Facture non trouvée"}), 404
+        
+        # Mettre à jour seulement l'état
+        result = factures_col.update_one(
+            {"_id": ObjectId(facture_id)},
+            {"$set": {"etat": data["etat"], "updated_at": datetime.utcnow()}}
+        )
+        
+        if result.modified_count > 0:
+            return jsonify({"message": f"État changé vers: {data['etat']}"}), 200
+        else:
+            return jsonify({"message": "Aucune modification effectuée"}), 200
+            
+    except Exception as e:
+        return jsonify({"message": f"Erreur lors du changement d'état: {str(e)}"}), 500
+
+@app.route("/api/devis/<devis_id>/change-etat", methods=["PATCH"])
+@admin_required
+def change_devis_etat(devis_id):
+    """Changer rapidement l'état d'un devis"""
+    try:
+        data = request.get_json()
+        if not data or "etat" not in data:
+            return jsonify({"message": "Nouvel état requis"}), 400
+        
+        # Valider l'état
+        if not validate_etat_devis(data["etat"]):
+            return jsonify({"message": "État invalide. Doit être: Validé ou Transformé en facture"}), 400
+        
+        # Vérifier que le devis existe
+        devis = devis_col.find_one({"_id": ObjectId(devis_id)})
+        if not devis:
+            return jsonify({"message": "Devis non trouvé"}), 404
+        
+        # Mettre à jour seulement l'état
+        result = devis_col.update_one(
+            {"_id": ObjectId(devis_id)},
+            {"$set": {"etat": data["etat"], "updated_at": datetime.utcnow()}}
+        )
+        
+        if result.modified_count > 0:
+            return jsonify({"message": f"État changé vers: {data['etat']}"}), 200
+        else:
+            return jsonify({"message": "Aucune modification effectuée"}), 200
+            
+    except Exception as e:
+        return jsonify({"message": f"Erreur lors du changement d'état: {str(e)}"}), 500
 
 @app.route("/api/devis/<devis_id>/transform-to-facture", methods=["POST"])
-@viewer_required
+@admin_required
 def transform_devis_to_facture(devis_id):
     """Transformer un devis en facture"""
     try:
-        # Récupérer l'utilisateur actuel
-        current_user = getattr(request, 'current_user', None)
-        user_id = current_user.get('user_id') if current_user else None
-        user_role = current_user.get('role') if current_user else None
-        
-        if not user_id:
-            return jsonify({"message": "Utilisateur non identifié"}), 401
-        
-        # Vérifier les permissions
-        if user_role == "spectateur":
-            return jsonify({"message": "Accès refusé - Les spectateurs ne peuvent pas transformer les devis"}), 403
-        
-        # Construire la requête
-        query = {"_id": ObjectId(devis_id)}
-        if user_role == "user":
-            query["responsable_id"] = ObjectId(user_id)
-        
-        # Récupérer le devis
-        devis = devis_col.find_one(query)
+        # Vérifier que le devis existe
+        devis = devis_col.find_one({"_id": ObjectId(devis_id)})
         if not devis:
             return jsonify({"message": "Devis non trouvé"}), 404
         
@@ -2756,771 +3356,65 @@ def transform_devis_to_facture(devis_id):
         if devis.get("etat") != "Validé":
             return jsonify({"message": "Seuls les devis validés peuvent être transformés en facture"}), 400
         
-# Récupérer les données du client et de l'offre pour le nom
+        # Récupérer les informations pour générer le numéro de facture
         client = clients_col.find_one({"_id": devis["client_id"]})
         offre = offres_col.find_one({"_id": devis["offre_id"]})
-        nom_client = client.get("nom", "Client").replace(" ", "_") if client else "Client"
-        nom_offre = offre.get("titre", "Offre").replace(" ", "_") if offre else "Offre"
         
-        # Créer la facture à partir du devis
+        client_name = ""
+        offre_name = ""
+        
+        if client:
+            client_name = client.get("raison_sociale", "") or client.get("nom_prenom", "")
+        
+        if offre:
+            offre_name = offre.get("intitulee", "")
+        
+        # Générer le numéro de facture automatiquement avec le nouveau format
+        numero_facture = generate_numero_facture(client_name, offre_name)
+        
+        # Créer la facture basée sur le devis
         facture = {
-            "numero_facture": f"Fac_{nom_client}_{nom_offre}",
+            "numero_facture": numero_facture,
             "intitule": devis["intitule"],
             "responsable_id": devis["responsable_id"],
-            "date_emission": devis["date_emission"],
+            "date_emission": datetime.utcnow(),  # Nouvelle date d'émission
             "offre_id": devis["offre_id"],
             "client_id": devis["client_id"],
-            "etat": "A envoyer au client",
-            "document": "",
+            "etat": "A envoyer au client",  # État initial de la facture
+            "document": "",  # Nouveau document à générer
+            "devis_origine_id": ObjectId(devis_id),  # Référence vers le devis d'origine
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow()
         }
         
-                # Insérer la facture
+        # Insérer la nouvelle facture
         result = factures_col.insert_one(facture)
+        
+        # Mettre à jour l'état du devis
+        devis_col.update_one(
+            {"_id": ObjectId(devis_id)},
+            {"$set": {
+                "etat": "Transformé en facture",
+                "facture_id": result.inserted_id,  # Référence vers la facture créée
+                "updated_at": datetime.utcnow()
+            }}
+        )
+        
+        # Préparer la réponse
         facture["_id"] = str(result.inserted_id)
         facture["responsable_id"] = str(facture["responsable_id"])
         facture["offre_id"] = str(facture["offre_id"])
         facture["client_id"] = str(facture["client_id"])
+        facture["devis_origine_id"] = str(facture["devis_origine_id"])
         
-        # Mettre à jour le statut du devis
-        devis_col.update_one(
-            {"_id": ObjectId(devis_id)},
-            {"$set": {"etat": "Transformé en facture", "updated_at": datetime.utcnow()}}
-        )
-        
-        return jsonify({"message": "Devis transformé en facture avec succès", "facture": facture}), 201
+        return jsonify({
+            "message": "Devis transformé en facture avec succès",
+            "facture": facture
+        }), 201
         
     except Exception as e:
         return jsonify({"message": f"Erreur lors de la transformation: {str(e)}"}), 500
-
-# ===== ROUTES POUR LES CATÉGORIES DE LIENS =====
-
-@app.route('/api/link-categories', methods=['GET'])
-def get_link_categories():
-    """Récupérer toutes les catégories de liens"""
-    try:
-        categories = list(link_categories_col.find().sort("ordre", 1))
-        # Convertir ObjectId en string pour JSON
-        for category in categories:
-            category['_id'] = str(category['_id'])
-        return jsonify(categories)
-    except Exception as e:
-        print(f"Erreur lors de la récupération des catégories de liens: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/link-categories/<category_id>', methods=['GET'])
-def get_link_category(category_id):
-    """Récupérer une catégorie de lien par ID"""
-    try:
-        category = link_categories_col.find_one({"_id": ObjectId(category_id)})
-        if not category:
-            return jsonify({"message": "Catégorie non trouvée"}), 404
-        category['_id'] = str(category['_id'])
-        return jsonify(category)
-    except Exception as e:
-        print(f"Erreur lors de la récupération de la catégorie: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/link-categories', methods=['POST'])
-def create_link_category():
-    """Créer une nouvelle catégorie de lien"""
-    try:
-        data = request.get_json()
-        nom = data.get('nom')
-        couleur = data.get('couleur')
         
-        # Validation
-        if not nom or not couleur:
-            return jsonify({"message": "Nom et couleur sont requis"}), 400
-        
-        # Vérifier si la catégorie existe déjà
-        existing = link_categories_col.find_one({"nom": nom})
-        if existing:
-            return jsonify({"message": "Cette catégorie existe déjà"}), 400
-        
-        # Calculer l'ordre
-        count = link_categories_col.count_documents({})
-        
-        category_data = {
-            "nom": nom,
-            "description": data.get('description', ''),
-            "couleur": couleur,
-            "ordre": data.get('ordre', count + 1),
-            "createdAt": datetime.utcnow(),
-            "updatedAt": datetime.utcnow()
-        }
-        
-        result = link_categories_col.insert_one(category_data)
-        category_data['_id'] = str(result.inserted_id)
-        return jsonify(category_data), 201
-        
-    except Exception as e:
-        print(f"Erreur lors de la création de la catégorie: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/link-categories/<category_id>', methods=['PUT'])
-def update_link_category(category_id):
-    """Modifier une catégorie de lien"""
-    try:
-        data = request.get_json()
-        
-        # Vérifier si la catégorie existe
-        category = link_categories_col.find_one({"_id": ObjectId(category_id)})
-        if not category:
-            return jsonify({"message": "Catégorie non trouvée"}), 404
-        
-        # Vérifier si le nouveau nom existe déjà (si différent)
-        nom = data.get('nom')
-        if nom and nom != category['nom']:
-            existing = link_categories_col.find_one({"nom": nom})
-            if existing:
-                return jsonify({"message": "Cette catégorie existe déjà"}), 400
-        
-        # Mettre à jour
-        update_data = {
-            "nom": data.get('nom', category['nom']),
-            "description": data.get('description', category['description']),
-            "couleur": data.get('couleur', category['couleur']),
-            "ordre": data.get('ordre', category['ordre']),
-            "updatedAt": datetime.utcnow()
-        }
-        
-        link_categories_col.update_one(
-            {"_id": ObjectId(category_id)},
-            {"$set": update_data}
-        )
-        
-        # Récupérer la catégorie mise à jour
-        updated_category = link_categories_col.find_one({"_id": ObjectId(category_id)})
-        updated_category['_id'] = str(updated_category['_id'])
-        return jsonify(updated_category)
-        
-    except Exception as e:
-        print(f"Erreur lors de la modification de la catégorie: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/link-categories/<category_id>', methods=['DELETE'])
-def delete_link_category(category_id):
-    """Supprimer une catégorie de lien"""
-    try:
-        category = link_categories_col.find_one({"_id": ObjectId(category_id)})
-        if not category:
-            return jsonify({"message": "Catégorie non trouvée"}), 404
-        
-        link_categories_col.delete_one({"_id": ObjectId(category_id)})
-        return jsonify({"message": "Catégorie supprimée avec succès"})
-        
-    except Exception as e:
-        print(f"Erreur lors de la suppression de la catégorie: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-# ===== ROUTES POUR LES CATÉGORIES D'OFFRES =====
-
-@app.route('/api/offer-categories', methods=['GET'])
-def get_offer_categories():
-    """Récupérer toutes les catégories d'offres"""
-    try:
-        categories = list(offer_categories_col.find().sort("ordre", 1))
-        for category in categories:
-            category['_id'] = str(category['_id'])
-        return jsonify(categories)
-    except Exception as e:
-        print(f"Erreur lors de la récupération des catégories d'offres: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/offer-categories/<category_id>', methods=['GET'])
-def get_offer_category(category_id):
-    """Récupérer une catégorie d'offre par ID"""
-    try:
-        category = offer_categories_col.find_one({"_id": ObjectId(category_id)})
-        if not category:
-            return jsonify({"message": "Catégorie non trouvée"}), 404
-        category['_id'] = str(category['_id'])
-        return jsonify(category)
-    except Exception as e:
-        print(f"Erreur lors de la récupération de la catégorie: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/offer-categories', methods=['POST'])
-def create_offer_category():
-    """Créer une nouvelle catégorie d'offre"""
-    try:
-        data = request.get_json()
-        nom = data.get('nom')
-        couleur = data.get('couleur')
-        
-        if not nom or not couleur:
-            return jsonify({"message": "Nom et couleur sont requis"}), 400
-        
-        existing = offer_categories_col.find_one({"nom": nom})
-        if existing:
-            return jsonify({"message": "Cette catégorie existe déjà"}), 400
-        
-        count = offer_categories_col.count_documents({})
-        
-        category_data = {
-            "nom": nom,
-            "description": data.get('description', ''),
-            "couleur": couleur,
-            "ordre": data.get('ordre', count + 1),
-            "createdAt": datetime.utcnow(),
-            "updatedAt": datetime.utcnow()
-        }
-        
-        result = offer_categories_col.insert_one(category_data)
-        category_data['_id'] = str(result.inserted_id)
-        return jsonify(category_data), 201
-        
-    except Exception as e:
-        print(f"Erreur lors de la création de la catégorie: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/offer-categories/<category_id>', methods=['PUT'])
-def update_offer_category(category_id):
-    """Modifier une catégorie d'offre"""
-    try:
-        data = request.get_json()
-        
-        category = offer_categories_col.find_one({"_id": ObjectId(category_id)})
-        if not category:
-            return jsonify({"message": "Catégorie non trouvée"}), 404
-        
-        nom = data.get('nom')
-        if nom and nom != category['nom']:
-            existing = offer_categories_col.find_one({"nom": nom})
-            if existing:
-                return jsonify({"message": "Cette catégorie existe déjà"}), 400
-        
-        update_data = {
-            "nom": data.get('nom', category['nom']),
-            "description": data.get('description', category['description']),
-            "couleur": data.get('couleur', category['couleur']),
-            "ordre": data.get('ordre', category['ordre']),
-            "updatedAt": datetime.utcnow()
-        }
-        
-        offer_categories_col.update_one(
-            {"_id": ObjectId(category_id)},
-            {"$set": update_data}
-        )
-        
-        updated_category = offer_categories_col.find_one({"_id": ObjectId(category_id)})
-        updated_category['_id'] = str(updated_category['_id'])
-        return jsonify(updated_category)
-        
-    except Exception as e:
-        print(f"Erreur lors de la modification de la catégorie: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/offer-categories/<category_id>', methods=['DELETE'])
-def delete_offer_category(category_id):
-    """Supprimer une catégorie d'offre"""
-    try:
-        category = offer_categories_col.find_one({"_id": ObjectId(category_id)})
-        if not category:
-            return jsonify({"message": "Catégorie non trouvée"}), 404
-        
-        offer_categories_col.delete_one({"_id": ObjectId(category_id)})
-        return jsonify({"message": "Catégorie supprimée avec succès"})
-        
-    except Exception as e:
-        print(f"Erreur lors de la suppression de la catégorie: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-# ===== ROUTES POUR LES LIENS UTILES =====
-
-@app.route('/api/links', methods=['GET'])
-def get_links():
-    """Récupérer tous les liens"""
-    try:
-        categorie = request.args.get('categorie')
-        query = {}
-        if categorie:
-            query['categorie'] = categorie
-        
-        links = list(links_col.find(query).sort("ordre", 1))
-        for link in links:
-            link['_id'] = str(link['_id'])
-        return jsonify(links)
-    except Exception as e:
-        print(f"Erreur lors de la récupération des liens: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/links/<link_id>', methods=['GET'])
-def get_link(link_id):
-    """Récupérer un lien par ID"""
-    try:
-        link = links_col.find_one({"_id": ObjectId(link_id)})
-        if not link:
-            return jsonify({"message": "Lien non trouvé"}), 404
-        link['_id'] = str(link['_id'])
-        return jsonify(link)
-    except Exception as e:
-        print(f"Erreur lors de la récupération du lien: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/links', methods=['POST'])
-def create_link():
-    """Créer un nouveau lien"""
-    try:
-        data = request.get_json()
-        nom = data.get('nom')
-        url = data.get('url')
-        categorie = data.get('categorie')
-        
-        if not nom or not url or not categorie:
-            return jsonify({"message": "Nom, URL et catégorie sont requis"}), 400
-        
-        # Validation URL
-        try:
-            from urllib.parse import urlparse
-            urlparse(url)
-        except:
-            return jsonify({"message": "URL invalide"}), 400
-        
-        # Vérifier si le lien existe déjà
-        existing = links_col.find_one({"url": url})
-        if existing:
-            return jsonify({"message": "Ce lien existe déjà"}), 400
-        
-        count = links_col.count_documents({})
-        
-        link_data = {
-            "nom": nom,
-            "url": url,
-            "categorie": categorie,
-            "description": data.get('description', ''),
-            "ordre": data.get('ordre', count + 1),
-            "createdAt": datetime.utcnow(),
-            "updatedAt": datetime.utcnow()
-        }
-        
-        result = links_col.insert_one(link_data)
-        link_data['_id'] = str(result.inserted_id)
-        return jsonify(link_data), 201
-        
-    except Exception as e:
-        print(f"Erreur lors de la création du lien: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/links/<link_id>', methods=['PUT'])
-def update_link(link_id):
-    """Modifier un lien"""
-    try:
-        data = request.get_json()
-        
-        link = links_col.find_one({"_id": ObjectId(link_id)})
-        if not link:
-            return jsonify({"message": "Lien non trouvé"}), 404
-        
-        # Validation URL si fournie
-        url = data.get('url')
-        if url:
-            try:
-                from urllib.parse import urlparse
-                urlparse(url)
-            except:
-                return jsonify({"message": "URL invalide"}), 400
-            
-            if url != link['url']:
-                existing = links_col.find_one({"url": url})
-                if existing:
-                    return jsonify({"message": "Ce lien existe déjà"}), 400
-        
-        update_data = {
-            "nom": data.get('nom', link['nom']),
-            "url": data.get('url', link['url']),
-            "categorie": data.get('categorie', link['categorie']),
-            "description": data.get('description', link['description']),
-            "ordre": data.get('ordre', link['ordre']),
-            "updatedAt": datetime.utcnow()
-        }
-        
-        links_col.update_one(
-            {"_id": ObjectId(link_id)},
-            {"$set": update_data}
-        )
-        
-        updated_link = links_col.find_one({"_id": ObjectId(link_id)})
-        updated_link['_id'] = str(updated_link['_id'])
-        return jsonify(updated_link)
-        
-    except Exception as e:
-        print(f"Erreur lors de la modification du lien: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/links/<link_id>', methods=['DELETE'])
-def delete_link(link_id):
-    """Supprimer un lien"""
-    try:
-        link = links_col.find_one({"_id": ObjectId(link_id)})
-        if not link:
-            return jsonify({"message": "Lien non trouvé"}), 404
-        
-        links_col.delete_one({"_id": ObjectId(link_id)})
-        return jsonify({"message": "Lien supprimé avec succès"})
-        
-    except Exception as e:
-        print(f"Erreur lors de la suppression du lien: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-# ===== ROUTES POUR LES STATUTS DE DEVIS =====
-
-@app.route('/api/quote-statuses', methods=['GET'])
-def get_quote_statuses():
-    """Récupérer tous les statuts de devis"""
-    try:
-        statuses = list(quote_statuses_col.find().sort("ordre", 1))
-        for status in statuses:
-            status['_id'] = str(status['_id'])
-        return jsonify(statuses)
-    except Exception as e:
-        print(f"Erreur lors de la récupération des statuts de devis: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/quote-statuses/<status_id>', methods=['GET'])
-def get_quote_status(status_id):
-    """Récupérer un statut de devis par ID"""
-    try:
-        status = quote_statuses_col.find_one({"_id": ObjectId(status_id)})
-        if not status:
-            return jsonify({"message": "Statut non trouvé"}), 404
-        status['_id'] = str(status['_id'])
-        return jsonify(status)
-    except Exception as e:
-        print(f"Erreur lors de la récupération du statut: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/quote-statuses', methods=['POST'])
-def create_quote_status():
-    """Créer un nouveau statut de devis"""
-    try:
-        data = request.get_json()
-        nom = data.get('nom')
-        couleur = data.get('couleur')
-        
-        if not nom or not couleur:
-            return jsonify({"message": "Nom et couleur sont requis"}), 400
-        
-        existing = quote_statuses_col.find_one({"nom": nom})
-        if existing:
-            return jsonify({"message": "Ce statut existe déjà"}), 400
-        
-        count = quote_statuses_col.count_documents({})
-        
-        status_data = {
-            "nom": nom,
-            "couleur": couleur,
-            "description": data.get('description', ''),
-            "ordre": data.get('ordre', count + 1),
-            "createdAt": datetime.utcnow(),
-            "updatedAt": datetime.utcnow()
-        }
-        
-        result = quote_statuses_col.insert_one(status_data)
-        status_data['_id'] = str(result.inserted_id)
-        return jsonify(status_data), 201
-        
-    except Exception as e:
-        print(f"Erreur lors de la création du statut: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/quote-statuses/<status_id>', methods=['PUT'])
-def update_quote_status(status_id):
-    """Modifier un statut de devis"""
-    try:
-        data = request.get_json()
-        
-        status = quote_statuses_col.find_one({"_id": ObjectId(status_id)})
-        if not status:
-            return jsonify({"message": "Statut non trouvé"}), 404
-        
-        nom = data.get('nom')
-        if nom and nom != status['nom']:
-            existing = quote_statuses_col.find_one({"nom": nom})
-            if existing:
-                return jsonify({"message": "Ce statut existe déjà"}), 400
-        
-        update_data = {
-            "nom": data.get('nom', status['nom']),
-            "couleur": data.get('couleur', status['couleur']),
-            "description": data.get('description', status['description']),
-            "ordre": data.get('ordre', status['ordre']),
-            "updatedAt": datetime.utcnow()
-        }
-        
-        quote_statuses_col.update_one(
-            {"_id": ObjectId(status_id)},
-            {"$set": update_data}
-        )
-        
-        updated_status = quote_statuses_col.find_one({"_id": ObjectId(status_id)})
-        updated_status['_id'] = str(updated_status['_id'])
-        return jsonify(updated_status)
-        
-    except Exception as e:
-        print(f"Erreur lors de la modification du statut: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/quote-statuses/<status_id>', methods=['DELETE'])
-def delete_quote_status(status_id):
-    """Supprimer un statut de devis"""
-    try:
-        status = quote_statuses_col.find_one({"_id": ObjectId(status_id)})
-        if not status:
-            return jsonify({"message": "Statut non trouvé"}), 404
-        
-        quote_statuses_col.delete_one({"_id": ObjectId(status_id)})
-        return jsonify({"message": "Statut supprimé avec succès"})
-        
-    except Exception as e:
-        print(f"Erreur lors de la suppression du statut: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-# ===== ROUTES POUR LES STATUTS DE FACTURES =====
-
-@app.route('/api/invoice-statuses', methods=['GET'])
-def get_invoice_statuses():
-    """Récupérer tous les statuts de factures"""
-    try:
-        statuses = list(invoice_statuses_col.find().sort("ordre", 1))
-        for status in statuses:
-            status['_id'] = str(status['_id'])
-        return jsonify(statuses)
-    except Exception as e:
-        print(f"Erreur lors de la récupération des statuts de factures: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/invoice-statuses/<status_id>', methods=['GET'])
-def get_invoice_status(status_id):
-    """Récupérer un statut de facture par ID"""
-    try:
-        status = invoice_statuses_col.find_one({"_id": ObjectId(status_id)})
-        if not status:
-            return jsonify({"message": "Statut non trouvé"}), 404
-        status['_id'] = str(status['_id'])
-        return jsonify(status)
-    except Exception as e:
-        print(f"Erreur lors de la récupération du statut: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/invoice-statuses', methods=['POST'])
-def create_invoice_status():
-    """Créer un nouveau statut de facture"""
-    try:
-        data = request.get_json()
-        nom = data.get('nom')
-        couleur = data.get('couleur')
-        
-        if not nom or not couleur:
-            return jsonify({"message": "Nom et couleur sont requis"}), 400
-        
-        existing = invoice_statuses_col.find_one({"nom": nom})
-        if existing:
-            return jsonify({"message": "Ce statut existe déjà"}), 400
-        
-        count = invoice_statuses_col.count_documents({})
-        
-        status_data = {
-            "nom": nom,
-            "couleur": couleur,
-            "description": data.get('description', ''),
-            "ordre": data.get('ordre', count + 1),
-            "createdAt": datetime.utcnow(),
-            "updatedAt": datetime.utcnow()
-        }
-        
-        result = invoice_statuses_col.insert_one(status_data)
-        status_data['_id'] = str(result.inserted_id)
-        return jsonify(status_data), 201
-        
-    except Exception as e:
-        print(f"Erreur lors de la création du statut: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/invoice-statuses/<status_id>', methods=['PUT'])
-def update_invoice_status(status_id):
-    """Modifier un statut de facture"""
-    try:
-        data = request.get_json()
-        
-        status = invoice_statuses_col.find_one({"_id": ObjectId(status_id)})
-        if not status:
-            return jsonify({"message": "Statut non trouvé"}), 404
-        
-        nom = data.get('nom')
-        if nom and nom != status['nom']:
-            existing = invoice_statuses_col.find_one({"nom": nom})
-            if existing:
-                return jsonify({"message": "Ce statut existe déjà"}), 400
-        
-        update_data = {
-            "nom": data.get('nom', status['nom']),
-            "couleur": data.get('couleur', status['couleur']),
-            "description": data.get('description', status['description']),
-            "ordre": data.get('ordre', status['ordre']),
-            "updatedAt": datetime.utcnow()
-        }
-        
-        invoice_statuses_col.update_one(
-            {"_id": ObjectId(status_id)},
-            {"$set": update_data}
-        )
-        
-        updated_status = invoice_statuses_col.find_one({"_id": ObjectId(status_id)})
-        updated_status['_id'] = str(updated_status['_id'])
-        return jsonify(updated_status)
-        
-    except Exception as e:
-        print(f"Erreur lors de la modification du statut: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/invoice-statuses/<status_id>', methods=['DELETE'])
-def delete_invoice_status(status_id):
-    """Supprimer un statut de facture"""
-    try:
-        status = invoice_statuses_col.find_one({"_id": ObjectId(status_id)})
-        if not status:
-            return jsonify({"message": "Statut non trouvé"}), 404
-        
-        invoice_statuses_col.delete_one({"_id": ObjectId(status_id)})
-        return jsonify({"message": "Statut supprimé avec succès"})
-        
-    except Exception as e:
-        print(f"Erreur lors de la suppression du statut: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-# ===== ROUTES POUR LES STATUTS D'OFFRES =====
-
-@app.route('/api/offer-statuses', methods=['GET'])
-def get_offer_statuses():
-    """Récupérer tous les statuts d'offres"""
-    try:
-        statuses = list(offer_statuses_col.find().sort("ordre", 1))
-        for status in statuses:
-            status['_id'] = str(status['_id'])
-        return jsonify(statuses)
-    except Exception as e:
-        print(f"Erreur lors de la récupération des statuts d'offres: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/offer-statuses/<status_id>', methods=['GET'])
-def get_offer_status(status_id):
-    """Récupérer un statut d'offre par ID"""
-    try:
-        status = offer_statuses_col.find_one({"_id": ObjectId(status_id)})
-        if not status:
-            return jsonify({"message": "Statut non trouvé"}), 404
-        status['_id'] = str(status['_id'])
-        return jsonify(status)
-    except Exception as e:
-        print(f"Erreur lors de la récupération du statut: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/offer-statuses', methods=['POST'])
-def create_offer_status():
-    """Créer un nouveau statut d'offre"""
-    try:
-        data = request.get_json()
-        nom = data.get('nom')
-        couleur = data.get('couleur')
-        
-        if not nom or not couleur:
-            return jsonify({"message": "Nom et couleur sont requis"}), 400
-        
-        existing = offer_statuses_col.find_one({"nom": nom})
-        if existing:
-            return jsonify({"message": "Ce statut existe déjà"}), 400
-        
-        count = offer_statuses_col.count_documents({})
-        
-        status_data = {
-            "nom": nom,
-            "couleur": couleur,
-            "description": data.get('description', ''),
-            "ordre": data.get('ordre', count + 1),
-            "createdAt": datetime.utcnow(),
-            "updatedAt": datetime.utcnow()
-        }
-        
-        result = offer_statuses_col.insert_one(status_data)
-        status_data['_id'] = str(result.inserted_id)
-        return jsonify(status_data), 201
-        
-    except Exception as e:
-        print(f"Erreur lors de la création du statut: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/offer-statuses/<status_id>', methods=['PUT'])
-def update_offer_status(status_id):
-    """Modifier un statut d'offre"""
-    try:
-        data = request.get_json()
-        
-        status = offer_statuses_col.find_one({"_id": ObjectId(status_id)})
-        if not status:
-            return jsonify({"message": "Statut non trouvé"}), 404
-        
-        nom = data.get('nom')
-        if nom and nom != status['nom']:
-            existing = offer_statuses_col.find_one({"nom": nom})
-            if existing:
-                return jsonify({"message": "Ce statut existe déjà"}), 400
-        
-        update_data = {
-            "nom": data.get('nom', status['nom']),
-            "couleur": data.get('couleur', status['couleur']),
-            "description": data.get('description', status['description']),
-            "ordre": data.get('ordre', status['ordre']),
-            "updatedAt": datetime.utcnow()
-        }
-        
-        offer_statuses_col.update_one(
-            {"_id": ObjectId(status_id)},
-            {"$set": update_data}
-        )
-        
-        updated_status = offer_statuses_col.find_one({"_id": ObjectId(status_id)})
-        updated_status['_id'] = str(updated_status['_id'])
-        return jsonify(updated_status)
-        
-    except Exception as e:
-        print(f"Erreur lors de la modification du statut: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-@app.route('/api/offer-statuses/<status_id>', methods=['DELETE'])
-def delete_offer_status(status_id):
-    """Supprimer un statut d'offre"""
-    try:
-        status = offer_statuses_col.find_one({"_id": ObjectId(status_id)})
-        if not status:
-            return jsonify({"message": "Statut non trouvé"}), 404
-        
-        offer_statuses_col.delete_one({"_id": ObjectId(status_id)})
-        return jsonify({"message": "Statut supprimé avec succès"})
-        
-    except Exception as e:
-        print(f"Erreur lors de la suppression du statut: {e}")
-        return jsonify({"message": "Erreur serveur"}), 500
-
-# ===== ROUTE DE TEST =====
-
-@app.route('/api/test-new', methods=['GET'])
-def test_new_api():
-    """Test de connexion API pour les nouvelles routes"""
-    return jsonify({"message": "Nouvelles API fonctionnelles !"})
-
-# ===== GESTION DES ERREURS =====
-
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({"message": "Endpoint non trouvé"}), 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    return jsonify({"message": "Erreur serveur interne"}), 500
-
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     debug = os.getenv("FLASK_DEBUG", "False").lower() == "true"
