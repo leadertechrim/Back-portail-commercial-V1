@@ -10,41 +10,8 @@ from bson.objectid import ObjectId
 
 app = Flask(__name__)
 
-# Fonction pour valider les origines CORS (autorise automatiquement Vercel et Railway)
-def validate_origin(origin):
-    if not origin:
-        return False
-    
-    # Domaines locaux autorisés
-    local_domains = [
-        'http://localhost:3000', 
-        'http://localhost:8080', 
-        'http://127.0.0.1:3000', 
-        'http://127.0.0.1:8080'
-    ]
-    
-    if origin in local_domains:
-        return True
-    
-    # Domaines Vercel autorisés (tous les sous-domaines .vercel.app)
-    if origin.endswith('.vercel.app') and origin.startswith('https://'):
-        return True
-    
-    # Domaines Railway autorisés (tous les sous-domaines .railway.app)
-    if origin.endswith('.railway.app') and origin.startswith('https://'):
-        return True
-    
-    # Domaines spécifiques autorisés
-    allowed_domains = [
-        'https://appels-offres.vercel.app',
-        'https://appleof.vercel.app',
-        'https://appels-dofficces.railway.app'
-    ]
-    
-    return origin in allowed_domains
-
-# Configuration CORS flexible
-CORS(app, origins=validate_origin, supports_credentials=True)
+# Configuration CORS simple et efficace
+CORS(app, origins=['*'], supports_credentials=True)
 bcrypt = Bcrypt(app)
 
 # Configuration sécurisée
@@ -71,6 +38,7 @@ links_col = db.links
 quote_statuses_col = db.quote_statuses
 invoice_statuses_col = db.invoice_statuses
 offer_statuses_col = db.offer_statuses
+
 
 @app.route("/")
 def home():
