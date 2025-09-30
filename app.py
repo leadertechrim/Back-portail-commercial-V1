@@ -7,6 +7,7 @@ from pymongo import MongoClient
 import jwt
 from datetime import datetime, timedelta
 from bson.objectid import ObjectId
+from functools import wraps
 
 app = Flask(__name__)
 
@@ -38,6 +39,1099 @@ links_col = db.links
 quote_statuses_col = db.quote_statuses
 invoice_statuses_col = db.invoice_statuses
 offer_statuses_col = db.offer_statuses
+
+# Collections pour les rôles et permissions
+roles_collection = db.roles
+permissions_collection = db.permissions
+
+# =============================================================================
+# FONCTIONS UTILITAIRES POUR LES RÔLES ET PERMISSIONS
+# =============================================================================
+
+def token_required(f):
+    """Décorateur pour vérifier le token JWT"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get('Authorization')
+        if not token or not token.startswith('Bearer '):
+            return jsonify({'message': 'Token manquant'}), 401
+        
+        try:
+            token = token[7:]  # Enlever "Bearer "
+            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+            current_user_id = data['user_id']
+        except jwt.ExpiredSignatureError:
+            return jsonify({'message': 'Token expiré'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'message': 'Token invalide'}), 401
+        
+        return f(current_user_id, *args, **kwargs)
+    return decorated
+
+def permission_required(permission_name):
+    """Décorateur pour vérifier une permission spécifique"""
+    def decorator(f):
+        @wraps(f)
+        def decorated(current_user_id, *args, **kwargs):
+            user = users_col.find_one({'_id': ObjectId(current_user_id)})
+            if not user:
+                return jsonify({'message': 'Utilisateur non trouvé'}), 404
+            
+            if not user_has_permission(user, permission_name):
+                return jsonify({'message': f'Permission "{permission_name}" requise'}), 403
+            
+            return f(current_user_id, *args, **kwargs)
+        return decorated
+    return decorator
+
+def user_has_permission(user, permission_name):
+    """Vérifie si un utilisateur a une permission spécifique"""
+    # Les admins ont toutes les permissions
+    if user.get('role') == 'admin':
+        return True
+    
+    # Récupérer les permissions du rôle depuis la base
+    role = roles_collection.find_one({'nom': user.get('role', 'spectateur')})
+    if role:
+        return permission_name in role.get('permissions', [])
+    
+    return False
+
+def get_user_permissions(user):
+    """Récupère toutes les permissions d'un utilisateur"""
+    if user.get('role') == 'admin':
+        return [p['nom'] for p in permissions_collection.find()]
+    
+    role = roles_collection.find_one({'nom': user.get('role', 'spectateur')})
+    if role:
+        return role.get('permissions', [])
+    
+    return []
+
+def admin_required(f):
+    """Décorateur pour vérifier que l'utilisateur est admin"""
+    @wraps(f)
+    def decorated(current_user_id, *args, **kwargs):
+        user = users_col.find_one({'_id': ObjectId(current_user_id)})
+        if not user:
+            return jsonify({'message': 'Utilisateur non trouvé'}), 404
+        
+        if user.get('role') != 'admin':
+            return jsonify({'message': 'Accès administrateur requis'}), 403
+        
+        return f(current_user_id, *args, **kwargs)
+    return decorated
+
+def validate_role_data(data):
+    """Valider les données d'un rôle"""
+    errors = []
+    
+    if not data.get('nom'):
+        errors.append('Le nom du rôle est requis')
+    elif len(data['nom']) < 2:
+        errors.append('Le nom du rôle doit contenir au moins 2 caractères')
+    elif not re.match(r'^[a-zA-Z0-9_-]+$', data['nom']):
+        errors.append('Le nom du rôle ne peut contenir que des lettres, chiffres, tirets et underscores')
+    
+    if data.get('description') and len(data['description']) > 500:
+        errors.append('La description ne peut pas dépasser 500 caractères')
+    
+    if data.get('couleur') and not re.match(r'^#[0-9A-Fa-f]{6}$', data['couleur']):
+        errors.append('La couleur doit être au format hexadécimal (#RRGGBB)')
+    
+    if data.get('ordre') and (not isinstance(data['ordre'], int) or data['ordre'] < 1):
+        errors.append('L\'ordre doit être un nombre entier positif')
+    
+    if data.get('permissions') and not isinstance(data['permissions'], list):
+        errors.append('Les permissions doivent être une liste')
+    
+    return errors
+
+def validate_permission_data(data):
+    """Valider les données d'une permission"""
+    errors = []
+    
+    if not data.get('nom'):
+        errors.append('Le nom de la permission est requis')
+    elif len(data['nom']) < 3:
+        errors.append('Le nom de la permission doit contenir au moins 3 caractères')
+    elif not re.match(r'^[a-zA-Z0-9_-]+$', data['nom']):
+        errors.append('Le nom de la permission ne peut contenir que des lettres, chiffres, tirets et underscores')
+    
+    if not data.get('description'):
+        errors.append('La description de la permission est requise')
+    elif len(data['description']) > 200:
+        errors.append('La description ne peut pas dépasser 200 caractères')
+    
+    if not data.get('category'):
+        errors.append('La catégorie de la permission est requise')
+    elif len(data['category']) > 100:
+        errors.append('La catégorie ne peut pas dépasser 100 caractères')
+    
+    return errors
+
+def validate_user_role_assignment(user_id, role_name):
+    """Valider l'assignation d'un rôle à un utilisateur"""
+    errors = []
+    
+    if not ObjectId.is_valid(user_id):
+        errors.append('ID utilisateur invalide')
+    
+    if not role_name:
+        errors.append('Nom du rôle requis')
+    
+    # Vérifier que le rôle existe
+    if role_name and not roles_collection.find_one({'nom': role_name}):
+        errors.append('Le rôle spécifié n\'existe pas')
+    
+    # Vérifier que l'utilisateur existe
+    if ObjectId.is_valid(user_id) and not users_col.find_one({'_id': ObjectId(user_id)}):
+        errors.append('L\'utilisateur spécifié n\'existe pas')
+    
+    return errors
+
+def sanitize_input(data):
+    """Nettoyer les données d'entrée"""
+    if isinstance(data, dict):
+        return {k: sanitize_input(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [sanitize_input(item) for item in data]
+    elif isinstance(data, str):
+        # Supprimer les caractères dangereux
+        return data.strip().replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;').replace("'", '&#x27;')
+    else:
+        return data
+
+def rate_limit_check(user_id, action, limit=10, window=60):
+    """Vérifier les limites de taux pour éviter les abus"""
+    from datetime import datetime, timedelta
+    
+    # Cette fonction pourrait être implémentée avec Redis ou une base de données
+    # Pour l'instant, on retourne True (pas de limite)
+    return True
+
+def audit_log(user_id, action, details=None):
+    """Enregistrer les actions dans un log d'audit"""
+    try:
+        audit_data = {
+            'user_id': user_id,
+            'action': action,
+            'details': details or {},
+            'timestamp': datetime.utcnow(),
+            'ip_address': request.remote_addr if request else None
+        }
+        
+        # Ici vous pourriez sauvegarder dans une collection d'audit
+        # audit_collection.insert_one(audit_data)
+        
+    except Exception as e:
+        print(f"Erreur lors de l'enregistrement de l'audit: {e}")
+
+# =============================================================================
+# ROUTES POUR LES RÔLES
+# =============================================================================
+
+@app.route("/api/roles", methods=["GET"])
+@token_required
+def get_roles(current_user_id):
+    """Récupérer tous les rôles"""
+    try:
+        roles = list(roles_collection.find().sort("ordre", 1))
+        for role in roles:
+            role['_id'] = str(role['_id'])
+        
+        return jsonify({
+            'message': 'Rôles récupérés avec succès',
+            'data': roles
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de la récupération des rôles',
+            'error': str(e)
+        }), 500
+
+@app.route("/api/roles/<role_id>", methods=["GET"])
+@token_required
+def get_role(current_user_id, role_id):
+    """Récupérer un rôle par ID"""
+    try:
+        if not ObjectId.is_valid(role_id):
+            return jsonify({'message': 'ID de rôle invalide'}), 400
+        
+        role = roles_collection.find_one({'_id': ObjectId(role_id)})
+        if not role:
+            return jsonify({'message': 'Rôle non trouvé'}), 404
+        
+        role['_id'] = str(role['_id'])
+        return jsonify({
+            'message': 'Rôle récupéré avec succès',
+            'data': role
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de la récupération du rôle',
+            'error': str(e)
+        }), 500
+
+@app.route("/api/roles", methods=["POST"])
+@token_required
+@admin_required
+def create_role(current_user_id):
+    """Créer un rôle (admin seulement)"""
+    try:
+        data = request.get_json()
+        
+        # Nettoyer les données d'entrée
+        data = sanitize_input(data)
+        
+        # Validation des données
+        validation_errors = validate_role_data(data)
+        if validation_errors:
+            return jsonify({
+                'message': 'Erreurs de validation',
+                'errors': validation_errors
+            }), 400
+        
+        # Vérifier les limites de taux
+        if not rate_limit_check(current_user_id, 'create_role'):
+            return jsonify({'message': 'Trop de requêtes. Veuillez patienter.'}), 429
+        
+        # Vérifier si le rôle existe déjà
+        existing_role = roles_collection.find_one({'nom': data['nom']})
+        if existing_role:
+            return jsonify({'message': 'Un rôle avec ce nom existe déjà'}), 400
+        
+        # Récupérer l'ordre maximum
+        max_order = roles_collection.find().sort("ordre", -1).limit(1)
+        next_order = 1
+        for role in max_order:
+            next_order = role.get('ordre', 0) + 1
+            break
+        
+        # Créer le rôle
+        role_data = {
+            'nom': data['nom'],
+            'description': data.get('description', ''),
+            'couleur': data.get('couleur', '#6c757d'),
+            'ordre': data.get('ordre', next_order),
+            'permissions': data.get('permissions', []),
+            'created_at': datetime.utcnow(),
+            'updated_at': datetime.utcnow()
+        }
+        
+        result = roles_collection.insert_one(role_data)
+        role_data['_id'] = str(result.inserted_id)
+        
+        # Enregistrer l'audit
+        audit_log(current_user_id, 'create_role', {'role_name': data['nom']})
+        
+        return jsonify({
+            'message': 'Rôle créé avec succès',
+            'data': role_data
+        }), 201
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de la création du rôle',
+            'error': str(e)
+        }), 500
+
+@app.route("/api/roles/<role_id>", methods=["PUT"])
+@token_required
+@admin_required
+def update_role(current_user_id, role_id):
+    """Modifier un rôle (admin seulement)"""
+    try:
+        if not ObjectId.is_valid(role_id):
+            return jsonify({'message': 'ID de rôle invalide'}), 400
+        
+        data = request.get_json()
+        
+        # Vérifier si le rôle existe
+        existing_role = roles_collection.find_one({'_id': ObjectId(role_id)})
+        if not existing_role:
+            return jsonify({'message': 'Rôle non trouvé'}), 404
+        
+        # Vérifier si le nom est déjà utilisé par un autre rôle
+        if 'nom' in data and data['nom'] != existing_role['nom']:
+            duplicate_role = roles_collection.find_one({
+                'nom': data['nom'],
+                '_id': {'$ne': ObjectId(role_id)}
+            })
+            if duplicate_role:
+                return jsonify({'message': 'Un rôle avec ce nom existe déjà'}), 400
+        
+        # Mettre à jour le rôle
+        update_data = {
+            'updated_at': datetime.utcnow()
+        }
+        
+        allowed_fields = ['nom', 'description', 'couleur', 'ordre', 'permissions']
+        for field in allowed_fields:
+            if field in data:
+                update_data[field] = data[field]
+        
+        roles_collection.update_one(
+            {'_id': ObjectId(role_id)},
+            {'$set': update_data}
+        )
+        
+        # Récupérer le rôle mis à jour
+        updated_role = roles_collection.find_one({'_id': ObjectId(role_id)})
+        updated_role['_id'] = str(updated_role['_id'])
+        
+        return jsonify({
+            'message': 'Rôle modifié avec succès',
+            'data': updated_role
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de la modification du rôle',
+            'error': str(e)
+        }), 500
+
+@app.route("/api/roles/<role_id>", methods=["DELETE"])
+@token_required
+@admin_required
+def delete_role(current_user_id, role_id):
+    """Supprimer un rôle (admin seulement)"""
+    try:
+        if not ObjectId.is_valid(role_id):
+            return jsonify({'message': 'ID de rôle invalide'}), 400
+        
+        # Vérifier si le rôle existe
+        role = roles_collection.find_one({'_id': ObjectId(role_id)})
+        if not role:
+            return jsonify({'message': 'Rôle non trouvé'}), 404
+        
+        # Vérifier si des utilisateurs utilisent ce rôle
+        users_with_role = users_col.count_documents({'role': role['nom']})
+        if users_with_role > 0:
+            return jsonify({
+                'message': f'Impossible de supprimer le rôle. {users_with_role} utilisateur(s) l\'utilisent encore'
+            }), 400
+        
+        # Supprimer le rôle
+        roles_collection.delete_one({'_id': ObjectId(role_id)})
+        
+        return jsonify({
+            'message': 'Rôle supprimé avec succès'
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de la suppression du rôle',
+            'error': str(e)
+        }), 500
+
+# =============================================================================
+# ROUTES POUR LES PERMISSIONS
+# =============================================================================
+
+@app.route("/api/permissions", methods=["GET"])
+@token_required
+def get_permissions(current_user_id):
+    """Récupérer toutes les permissions"""
+    try:
+        permissions = list(permissions_collection.find().sort("category", 1))
+        for permission in permissions:
+            permission['_id'] = str(permission['_id'])
+        
+        return jsonify({
+            'message': 'Permissions récupérées avec succès',
+            'data': permissions
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de la récupération des permissions',
+            'error': str(e)
+        }), 500
+
+@app.route("/api/user/permissions", methods=["GET"])
+@token_required
+def get_current_user_permissions(current_user_id):
+    """Récupérer les permissions de l'utilisateur actuel"""
+    try:
+        user = users_col.find_one({'_id': ObjectId(current_user_id)})
+        if not user:
+            return jsonify({'message': 'Utilisateur non trouvé'}), 404
+        
+        permissions = get_user_permissions(user)
+        
+        return jsonify({
+            'message': 'Permissions récupérées avec succès',
+            'data': {
+                'user_id': str(user['_id']),
+                'role': user.get('role', 'spectateur'),
+                'permissions': permissions
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de la récupération des permissions',
+            'error': str(e)
+        }), 500
+
+@app.route("/api/users/<user_id>/permissions", methods=["GET"])
+@token_required
+@admin_required
+def get_user_permissions_by_id(current_user_id, user_id):
+    """Récupérer les permissions d'un utilisateur spécifique (admin seulement)"""
+    try:
+        if not ObjectId.is_valid(user_id):
+            return jsonify({'message': 'ID utilisateur invalide'}), 400
+        
+        user = users_col.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({'message': 'Utilisateur non trouvé'}), 404
+        
+        permissions = get_user_permissions(user)
+        
+        return jsonify({
+            'message': 'Permissions récupérées avec succès',
+            'data': {
+                'user_id': str(user['_id']),
+                'name': user.get('name', ''),
+                'email': user.get('email', ''),
+                'role': user.get('role', 'spectateur'),
+                'permissions': permissions
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de la récupération des permissions',
+            'error': str(e)
+        }), 500
+
+# =============================================================================
+# ROUTES POUR L'ASSIGNATION DES RÔLES
+# =============================================================================
+
+@app.route("/api/users/<user_id>/assign-role", methods=["POST"])
+@token_required
+@admin_required
+def assign_role_to_user(current_user_id, user_id):
+    """Assigner un rôle à un utilisateur (admin seulement)"""
+    try:
+        if not ObjectId.is_valid(user_id):
+            return jsonify({'message': 'ID utilisateur invalide'}), 400
+        
+        data = request.get_json()
+        if 'role' not in data:
+            return jsonify({'message': 'Champ "role" requis'}), 400
+        
+        # Vérifier si l'utilisateur existe
+        user = users_col.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({'message': 'Utilisateur non trouvé'}), 404
+        
+        # Vérifier si le rôle existe
+        role = roles_collection.find_one({'nom': data['role']})
+        if not role:
+            return jsonify({'message': 'Rôle non trouvé'}), 404
+        
+        # Mettre à jour le rôle de l'utilisateur
+        users_col.update_one(
+            {'_id': ObjectId(user_id)},
+            {'$set': {'role': data['role'], 'updated_at': datetime.utcnow()}}
+        )
+        
+        # Récupérer l'utilisateur mis à jour
+        updated_user = users_col.find_one({'_id': ObjectId(user_id)})
+        updated_user['_id'] = str(updated_user['_id'])
+        
+        return jsonify({
+            'message': 'Rôle assigné avec succès',
+            'data': {
+                'user_id': str(updated_user['_id']),
+                'name': updated_user.get('name', ''),
+                'email': updated_user.get('email', ''),
+                'role': updated_user.get('role', 'spectateur')
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de l\'assignation du rôle',
+            'error': str(e)
+        }), 500
+
+@app.route("/api/users/<user_id>/remove-role", methods=["POST"])
+@token_required
+@admin_required
+def remove_role_from_user(current_user_id, user_id):
+    """Retirer un rôle d'un utilisateur (admin seulement)"""
+    try:
+        if not ObjectId.is_valid(user_id):
+            return jsonify({'message': 'ID utilisateur invalide'}), 400
+        
+        # Vérifier si l'utilisateur existe
+        user = users_col.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({'message': 'Utilisateur non trouvé'}), 404
+        
+        # Assigner le rôle spectateur par défaut
+        users_col.update_one(
+            {'_id': ObjectId(user_id)},
+            {'$set': {'role': 'spectateur', 'updated_at': datetime.utcnow()}}
+        )
+        
+        # Récupérer l'utilisateur mis à jour
+        updated_user = users_col.find_one({'_id': ObjectId(user_id)})
+        updated_user['_id'] = str(updated_user['_id'])
+        
+        return jsonify({
+            'message': 'Rôle retiré avec succès (rôle spectateur assigné)',
+            'data': {
+                'user_id': str(updated_user['_id']),
+                'name': updated_user.get('name', ''),
+                'email': updated_user.get('email', ''),
+                'role': updated_user.get('role', 'spectateur')
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de la suppression du rôle',
+            'error': str(e)
+        }), 500
+
+# =============================================================================
+# ROUTES UTILITAIRES
+# =============================================================================
+
+@app.route("/api/roles/init", methods=["POST"])
+@token_required
+@admin_required
+def init_roles_and_permissions(current_user_id):
+    """Initialiser les rôles et permissions par défaut (admin seulement)"""
+    try:
+        # Supprimer les collections existantes
+        roles_collection.drop()
+        permissions_collection.drop()
+        
+        # Créer les permissions
+        permissions_data = [
+            # Offres
+            {"nom": "view_offers", "description": "Voir les offres", "category": "Offres"},
+            {"nom": "create_offers", "description": "Créer des offres", "category": "Offres"},
+            {"nom": "edit_offers", "description": "Modifier les offres", "category": "Offres"},
+            {"nom": "delete_offers", "description": "Supprimer les offres", "category": "Offres"},
+            
+            # Devis
+            {"nom": "view_quotes", "description": "Voir les devis", "category": "Devis"},
+            {"nom": "create_quotes", "description": "Créer des devis", "category": "Devis"},
+            {"nom": "edit_quotes", "description": "Modifier les devis", "category": "Devis"},
+            {"nom": "delete_quotes", "description": "Supprimer les devis", "category": "Devis"},
+            
+            # Factures
+            {"nom": "view_invoices", "description": "Voir les factures", "category": "Factures"},
+            {"nom": "create_invoices", "description": "Créer des factures", "category": "Factures"},
+            {"nom": "edit_invoices", "description": "Modifier les factures", "category": "Factures"},
+            {"nom": "delete_invoices", "description": "Supprimer les factures", "category": "Factures"},
+            
+            # Clients
+            {"nom": "view_clients", "description": "Voir les clients", "category": "Clients"},
+            {"nom": "create_clients", "description": "Créer des clients", "category": "Clients"},
+            {"nom": "edit_clients", "description": "Modifier les clients", "category": "Clients"},
+            {"nom": "delete_clients", "description": "Supprimer les clients", "category": "Clients"},
+            
+            # Personnel
+            {"nom": "view_personnel", "description": "Voir le personnel", "category": "Personnel"},
+            {"nom": "create_personnel", "description": "Créer du personnel", "category": "Personnel"},
+            {"nom": "edit_personnel", "description": "Modifier le personnel", "category": "Personnel"},
+            {"nom": "delete_personnel", "description": "Supprimer le personnel", "category": "Personnel"},
+            
+            # Partenaires
+            {"nom": "view_partners", "description": "Voir les partenaires", "category": "Partenaires"},
+            {"nom": "create_partners", "description": "Créer des partenaires", "category": "Partenaires"},
+            {"nom": "edit_partners", "description": "Modifier les partenaires", "category": "Partenaires"},
+            {"nom": "delete_partners", "description": "Supprimer les partenaires", "category": "Partenaires"},
+            
+            # Sources
+            {"nom": "view_sources", "description": "Voir les sources", "category": "Sources"},
+            {"nom": "create_sources", "description": "Créer des sources", "category": "Sources"},
+            {"nom": "edit_sources", "description": "Modifier les sources", "category": "Sources"},
+            {"nom": "delete_sources", "description": "Supprimer les sources", "category": "Sources"},
+            
+            # Administration
+            {"nom": "admin_settings", "description": "Gérer les paramètres", "category": "Administration"},
+            {"nom": "manage_users", "description": "Gérer les utilisateurs", "category": "Administration"},
+            {"nom": "manage_roles", "description": "Gérer les rôles", "category": "Administration"},
+            {"nom": "view_analytics", "description": "Voir les analyses", "category": "Administration"},
+            
+            # Rapports
+            {"nom": "view_reports", "description": "Voir les rapports", "category": "Rapports"},
+            {"nom": "export_data", "description": "Exporter les données", "category": "Rapports"}
+        ]
+        
+        for perm in permissions_data:
+            perm['created_at'] = datetime.utcnow()
+        
+        permissions_collection.insert_many(permissions_data)
+        
+        # Créer les rôles
+        roles_data = [
+            {
+                "nom": "admin",
+                "description": "Administrateur avec tous les droits",
+                "couleur": "#dc3545",
+                "ordre": 1,
+                "permissions": [p['nom'] for p in permissions_data],  # Toutes les permissions
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow()
+            },
+            {
+                "nom": "user",
+                "description": "Utilisateur standard avec accès principal",
+                "couleur": "#007bff",
+                "ordre": 2,
+                "permissions": [
+                    "view_offers", "create_offers", "edit_offers",
+                    "view_quotes", "create_quotes", "edit_quotes",
+                    "view_invoices", "create_invoices", "edit_invoices",
+                    "view_clients", "create_clients", "edit_clients",
+                    "view_personnel", "create_personnel", "edit_personnel",
+                    "view_partners", "create_partners", "edit_partners",
+                    "view_sources", "create_sources", "edit_sources",
+                    "view_reports", "export_data"
+                ],
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow()
+            },
+            {
+                "nom": "spectateur",
+                "description": "Lecteur avec accès en lecture seule",
+                "couleur": "#6c757d",
+                "ordre": 3,
+                "permissions": [
+                    "view_offers", "view_quotes", "view_invoices"
+                ],
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow()
+            }
+        ]
+        
+        roles_collection.insert_many(roles_data)
+        
+        return jsonify({
+            'message': 'Rôles et permissions initialisés avec succès',
+            'data': {
+                'permissions_created': len(permissions_data),
+                'roles_created': len(roles_data)
+            }
+        }), 201
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de l\'initialisation',
+            'error': str(e)
+        }), 500
+
+@app.route("/api/test-permission/<permission_name>", methods=["GET"])
+@token_required
+def test_permission(current_user_id, permission_name):
+    """Tester une permission pour l'utilisateur actuel"""
+    try:
+        user = users_col.find_one({'_id': ObjectId(current_user_id)})
+        if not user:
+            return jsonify({'message': 'Utilisateur non trouvé'}), 404
+        
+        has_permission = user_has_permission(user, permission_name)
+        
+        return jsonify({
+            'message': 'Test de permission effectué',
+            'data': {
+                'permission': permission_name,
+                'has_permission': has_permission,
+                'user_role': user.get('role', 'spectateur')
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors du test de permission',
+            'error': str(e)
+        }), 500
+
+@app.route("/api/users-with-roles", methods=["GET"])
+@token_required
+@admin_required
+def get_users_with_roles(current_user_id):
+    """Récupérer tous les utilisateurs avec leurs rôles (admin seulement)"""
+    try:
+        users = list(users_col.find({}, {'password': 0}).sort("name", 1))
+        
+        for user in users:
+            user['_id'] = str(user['_id'])
+            user['permissions'] = get_user_permissions(user)
+        
+        return jsonify({
+            'message': 'Utilisateurs récupérés avec succès',
+            'data': users
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de la récupération des utilisateurs',
+            'error': str(e)
+        }), 500
+
+
+# =============================================================================
+# ROUTES POUR LA GESTION DYNAMIQUE DES PERMISSIONS
+# =============================================================================
+
+@app.route("/api/permissions", methods=["POST"])
+@token_required
+@admin_required
+def create_permission(current_user_id):
+    """Créer une nouvelle permission (admin seulement)"""
+    try:
+        data = request.get_json()
+        
+        # Validation des données
+        required_fields = ['nom', 'description', 'category']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'message': f'Champ "{field}" requis'}), 400
+        
+        # Vérifier si la permission existe déjà
+        existing_permission = permissions_collection.find_one({'nom': data['nom']})
+        if existing_permission:
+            return jsonify({'message': 'Une permission avec ce nom existe déjà'}), 400
+        
+        # Créer la permission
+        permission_data = {
+            'nom': data['nom'],
+            'description': data['description'],
+            'category': data['category'],
+            'created_at': datetime.utcnow()
+        }
+        
+        result = permissions_collection.insert_one(permission_data)
+        permission_data['_id'] = str(result.inserted_id)
+        
+        return jsonify({
+            'message': 'Permission créée avec succès',
+            'data': permission_data
+        }), 201
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de la création de la permission',
+            'error': str(e)
+        }), 500
+
+@app.route("/api/permissions/<permission_id>", methods=["PUT"])
+@token_required
+@admin_required
+def update_permission(current_user_id, permission_id):
+    """Modifier une permission (admin seulement)"""
+    try:
+        if not ObjectId.is_valid(permission_id):
+            return jsonify({'message': 'ID de permission invalide'}), 400
+        
+        data = request.get_json()
+        
+        # Vérifier si la permission existe
+        existing_permission = permissions_collection.find_one({'_id': ObjectId(permission_id)})
+        if not existing_permission:
+            return jsonify({'message': 'Permission non trouvée'}), 404
+        
+        # Vérifier si le nom est déjà utilisé par une autre permission
+        if 'nom' in data and data['nom'] != existing_permission['nom']:
+            duplicate_permission = permissions_collection.find_one({
+                'nom': data['nom'],
+                '_id': {'$ne': ObjectId(permission_id)}
+            })
+            if duplicate_permission:
+                return jsonify({'message': 'Une permission avec ce nom existe déjà'}), 400
+        
+        # Mettre à jour la permission
+        update_data = {}
+        allowed_fields = ['nom', 'description', 'category']
+        for field in allowed_fields:
+            if field in data:
+                update_data[field] = data[field]
+        
+        permissions_collection.update_one(
+            {'_id': ObjectId(permission_id)},
+            {'$set': update_data}
+        )
+        
+        # Récupérer la permission mise à jour
+        updated_permission = permissions_collection.find_one({'_id': ObjectId(permission_id)})
+        updated_permission['_id'] = str(updated_permission['_id'])
+        
+        return jsonify({
+            'message': 'Permission modifiée avec succès',
+            'data': updated_permission
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de la modification de la permission',
+            'error': str(e)
+        }), 500
+
+@app.route("/api/permissions/<permission_id>", methods=["DELETE"])
+@token_required
+@admin_required
+def delete_permission(current_user_id, permission_id):
+    """Supprimer une permission (admin seulement)"""
+    try:
+        if not ObjectId.is_valid(permission_id):
+            return jsonify({'message': 'ID de permission invalide'}), 400
+        
+        # Vérifier si la permission existe
+        permission = permissions_collection.find_one({'_id': ObjectId(permission_id)})
+        if not permission:
+            return jsonify({'message': 'Permission non trouvée'}), 404
+        
+        # Vérifier si des rôles utilisent cette permission
+        roles_with_permission = roles_collection.count_documents({
+            'permissions': permission['nom']
+        })
+        if roles_with_permission > 0:
+            return jsonify({
+                'message': f'Impossible de supprimer la permission. {roles_with_permission} rôle(s) l\'utilisent encore'
+            }), 400
+        
+        # Supprimer la permission
+        permissions_collection.delete_one({'_id': ObjectId(permission_id)})
+        
+        return jsonify({
+            'message': 'Permission supprimée avec succès'
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de la suppression de la permission',
+            'error': str(e)
+        }), 500
+
+# =============================================================================
+# ROUTES POUR LA GESTION DYNAMIQUE AVANCÉE
+# =============================================================================
+
+@app.route("/api/roles/<role_id>/permissions", methods=["POST"])
+@token_required
+@admin_required
+def add_permission_to_role(current_user_id, role_id):
+    """Ajouter une permission à un rôle (admin seulement)"""
+    try:
+        if not ObjectId.is_valid(role_id):
+            return jsonify({'message': 'ID de rôle invalide'}), 400
+        
+        data = request.get_json()
+        if 'permission' not in data:
+            return jsonify({'message': 'Champ "permission" requis'}), 400
+        
+        # Vérifier si le rôle existe
+        role = roles_collection.find_one({'_id': ObjectId(role_id)})
+        if not role:
+            return jsonify({'message': 'Rôle non trouvé'}), 404
+        
+        # Vérifier si la permission existe
+        permission = permissions_collection.find_one({'nom': data['permission']})
+        if not permission:
+            return jsonify({'message': 'Permission non trouvée'}), 404
+        
+        # Ajouter la permission au rôle si elle n'y est pas déjà
+        if data['permission'] not in role.get('permissions', []):
+            roles_collection.update_one(
+                {'_id': ObjectId(role_id)},
+                {'$push': {'permissions': data['permission']}, '$set': {'updated_at': datetime.utcnow()}}
+            )
+        
+        return jsonify({
+            'message': 'Permission ajoutée au rôle avec succès'
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de l\'ajout de la permission',
+            'error': str(e)
+        }), 500
+
+@app.route("/api/roles/<role_id>/permissions", methods=["DELETE"])
+@token_required
+@admin_required
+def remove_permission_from_role(current_user_id, role_id):
+    """Retirer une permission d'un rôle (admin seulement)"""
+    try:
+        if not ObjectId.is_valid(role_id):
+            return jsonify({'message': 'ID de rôle invalide'}), 400
+        
+        data = request.get_json()
+        if 'permission' not in data:
+            return jsonify({'message': 'Champ "permission" requis'}), 400
+        
+        # Vérifier si le rôle existe
+        role = roles_collection.find_one({'_id': ObjectId(role_id)})
+        if not role:
+            return jsonify({'message': 'Rôle non trouvé'}), 404
+        
+        # Retirer la permission du rôle
+        roles_collection.update_one(
+            {'_id': ObjectId(role_id)},
+            {'$pull': {'permissions': data['permission']}, '$set': {'updated_at': datetime.utcnow()}}
+        )
+        
+        return jsonify({
+            'message': 'Permission retirée du rôle avec succès'
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de la suppression de la permission',
+            'error': str(e)
+        }), 500
+
+@app.route("/api/roles/bulk-update", methods=["POST"])
+@token_required
+@admin_required
+def bulk_update_roles(current_user_id):
+    """Mise à jour en lot des rôles (admin seulement)"""
+    try:
+        data = request.get_json()
+        if 'roles' not in data:
+            return jsonify({'message': 'Champ "roles" requis'}), 400
+        
+        updated_count = 0
+        errors = []
+        
+        for role_data in data['roles']:
+            try:
+                if '_id' not in role_data:
+                    errors.append(f'Rôle sans ID: {role_data.get("nom", "Inconnu")}')
+                    continue
+                
+                role_id = role_data['_id']
+                if not ObjectId.is_valid(role_id):
+                    errors.append(f'ID invalide pour le rôle: {role_data.get("nom", "Inconnu")}')
+                    continue
+                
+                # Mettre à jour le rôle
+                update_data = {
+                    'updated_at': datetime.utcnow()
+                }
+                
+                allowed_fields = ['nom', 'description', 'couleur', 'ordre', 'permissions']
+                for field in allowed_fields:
+                    if field in role_data:
+                        update_data[field] = role_data[field]
+                
+                result = roles_collection.update_one(
+                    {'_id': ObjectId(role_id)},
+                    {'$set': update_data}
+                )
+                
+                if result.modified_count > 0:
+                    updated_count += 1
+                    
+            except Exception as e:
+                errors.append(f'Erreur pour le rôle {role_data.get("nom", "Inconnu")}: {str(e)}')
+        
+        return jsonify({
+            'message': f'Mise à jour terminée: {updated_count} rôles mis à jour',
+            'updated_count': updated_count,
+            'errors': errors
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de la mise à jour en lot',
+            'error': str(e)
+        }), 500
+
+@app.route("/api/permissions/categories", methods=["GET"])
+@token_required
+def get_permission_categories(current_user_id):
+    """Récupérer toutes les catégories de permissions"""
+    try:
+        categories = permissions_collection.distinct('category')
+        return jsonify({
+            'message': 'Catégories récupérées avec succès',
+            'data': sorted(categories)
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de la récupération des catégories',
+            'error': str(e)
+        }), 500
+
+@app.route("/api/roles/export", methods=["GET"])
+@token_required
+@admin_required
+def export_roles_and_permissions(current_user_id):
+    """Exporter tous les rôles et permissions (admin seulement)"""
+    try:
+        # Récupérer tous les rôles
+        roles = list(roles_collection.find().sort("ordre", 1))
+        for role in roles:
+            role['_id'] = str(role['_id'])
+        
+        # Récupérer toutes les permissions
+        permissions = list(permissions_collection.find().sort("category", 1))
+        for permission in permissions:
+            permission['_id'] = str(permission['_id'])
+        
+        return jsonify({
+            'message': 'Export réussi',
+            'data': {
+                'roles': roles,
+                'permissions': permissions,
+                'exported_at': datetime.utcnow().isoformat()
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de l\'export',
+            'error': str(e)
+        }), 500
+
+@app.route("/api/roles/import", methods=["POST"])
+@token_required
+@admin_required
+def import_roles_and_permissions(current_user_id):
+    """Importer des rôles et permissions (admin seulement)"""
+    try:
+        data = request.get_json()
+        
+        if 'roles' not in data and 'permissions' not in data:
+            return jsonify({'message': 'Données d\'import invalides'}), 400
+        
+        imported_roles = 0
+        imported_permissions = 0
+        errors = []
+        
+        # Importer les permissions
+        if 'permissions' in data:
+            for perm_data in data['permissions']:
+                try:
+                    # Vérifier si la permission existe déjà
+                    existing = permissions_collection.find_one({'nom': perm_data['nom']})
+                    if not existing:
+                        perm_data['created_at'] = datetime.utcnow()
+                        permissions_collection.insert_one(perm_data)
+                        imported_permissions += 1
+                except Exception as e:
+                    errors.append(f'Erreur permission {perm_data.get("nom", "Inconnu")}: {str(e)}')
+        
+        # Importer les rôles
+        if 'roles' in data:
+            for role_data in data['roles']:
+                try:
+                    # Vérifier si le rôle existe déjà
+                    existing = roles_collection.find_one({'nom': role_data['nom']})
+                    if not existing:
+                        role_data['created_at'] = datetime.utcnow()
+                        role_data['updated_at'] = datetime.utcnow()
+                        roles_collection.insert_one(role_data)
+                        imported_roles += 1
+                except Exception as e:
+                    errors.append(f'Erreur rôle {role_data.get("nom", "Inconnu")}: {str(e)}')
+        
+        return jsonify({
+            'message': f'Import terminé: {imported_roles} rôles, {imported_permissions} permissions importés',
+            'imported_roles': imported_roles,
+            'imported_permissions': imported_permissions,
+            'errors': errors
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'message': 'Erreur lors de l\'import',
+            'error': str(e)
+        }), 500
 
 
 @app.route("/")
@@ -83,6 +1177,10 @@ def validate_statut(statut):
         return True  # Optionnel
     valid_statuts = ["actif", "inactif"]
     return statut in valid_statuts
+
+def validate_user_fonction(fonction):
+    """Valider la fonction de l'utilisateur"""
+    return True  # Accepter toutes les fonctions
 
 def validate_gerer(gerer):
     """Valider le champ gerer (boolean)"""
@@ -404,6 +1502,7 @@ def register():
     whatsapp = data.get("whatsapp", "")
     adresse = data.get("adresse", "")
     statut = data.get("statut", "actif")
+    fonction = data.get("Fonction", "")
 
     # Validations
     if not validate_email(email):
@@ -418,6 +1517,14 @@ def register():
         return jsonify({"message": "Format d'adresse invalide"}), 400
     if not validate_statut(statut):
         return jsonify({"message": "Statut invalide"}), 400
+    if not validate_user_fonction(fonction):
+        return jsonify({"message": "Format de fonction invalide"}), 400
+
+    # Valider le rôle - accepter tous les rôles existants dans la base
+    existing_role = roles_collection.find_one({'nom': role})
+    print(f"DEBUG: Validation du rôle '{role}' - Trouvé: {existing_role is not None}")
+    if not existing_role:
+        return jsonify({"message": f"Rôle '{role}' n'existe pas dans la base de données"}), 400
 
     if users_col.find_one({"email": email}):
         return jsonify({"message": "Utilisateur déjà existant"}), 400
@@ -432,6 +1539,7 @@ def register():
         "whatsapp": whatsapp,
         "adresse": adresse,
         "statut": statut,
+        "Fonction": fonction,
         "created_at": datetime.utcnow(),
         "updated_at": datetime.utcnow()
     }
@@ -731,16 +1839,18 @@ def create_user():
     if users_col.find_one({"email": data["email"]}):
         return jsonify({"message": "Un utilisateur avec cet email existe déjà"}), 400
     
-    # Valider le rôle
-    if data["role"] not in ["user", "admin", "spectateur"]:
-        return jsonify({"message": "Rôle invalide"}), 400
+    # Valider le rôle - accepter tous les rôles existants dans la base
+    existing_role = roles_collection.find_one({'nom': data["role"]})
+    if not existing_role:
+        return jsonify({"message": f"Rôle '{data['role']}' n'existe pas dans la base de données"}), 400
     
     # Validations des nouveaux champs
     telephone = data.get("telephone", "")
     whatsapp = data.get("whatsapp", "")
     adresse = data.get("adresse", "")
     statut = data.get("statut", "actif")
-    
+    fonction = data.get("Fonction", "")
+    # Validation des champs
     if not validate_telephone(telephone):
         return jsonify({"message": "Format de téléphone invalide"}), 400
     if not validate_whatsapp(whatsapp):
@@ -764,11 +1874,13 @@ def create_user():
             "whatsapp": whatsapp,
             "adresse": adresse,
             "statut": statut,
+            "Fonction": fonction,
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow()
         }
         
         result = users_col.insert_one(user)
+        
         user["_id"] = str(result.inserted_id)
         del user["password"]  # Ne pas retourner le mot de passe
         
@@ -785,6 +1897,24 @@ def get_user(user_id):
         if not user:
             return jsonify({"message": "Utilisateur non trouvé"}), 404
         user["_id"] = str(user["_id"])
+        return jsonify(user), 200
+    except Exception as e:
+        return jsonify({"message": f"Erreur lors de la récupération de l'utilisateur: {str(e)}"}), 500
+        
+@app.route("/api/users/<user_id>/with-password", methods=["GET"])
+@admin_required
+def get_user_with_password(user_id):
+    """Récupérer un utilisateur spécifique avec son mot de passe (admin uniquement)"""
+    try:
+        # Récupérer l'utilisateur AVEC le mot de passe
+        user = users_col.find_one({"_id": ObjectId(user_id)})
+        if not user:
+            return jsonify({"message": "Utilisateur non trouvé"}), 404
+        
+        # Convertir l'ObjectId en string
+        user["_id"] = str(user["_id"])
+        
+        # Retourner l'utilisateur avec le mot de passe
         return jsonify(user), 200
     except Exception as e:
         return jsonify({"message": f"Erreur lors de la récupération de l'utilisateur: {str(e)}"}), 500
@@ -816,8 +1946,10 @@ def update_user(user_id):
                 return jsonify({"message": "Cet email est déjà utilisé"}), 400
             update_data["email"] = data["email"]
         if "role" in data:
-            if data["role"] not in ["user", "admin", "spectateur"]:
-                return jsonify({"message": "Rôle invalide"}), 400
+            # Valider le rôle - accepter tous les rôles existants dans la base
+            existing_role = roles_collection.find_one({'nom': data["role"]})
+            if not existing_role:
+                return jsonify({"message": f"Rôle '{data['role']}' n'existe pas dans la base de données"}), 400
             update_data["role"] = data["role"]
         if "password" in data and data["password"]:
             if not validate_password(data["password"]):
@@ -841,6 +1973,8 @@ def update_user(user_id):
             if not validate_adresse(data["adresse"]):
                 return jsonify({"message": "Format d'adresse invalide"}), 400
             update_data["adresse"] = data["adresse"]
+        if "Fonction" in data:
+            update_data["Fonction"] = data["Fonction"]
         
         update_data["updated_at"] = datetime.utcnow()
         
@@ -1006,9 +2140,6 @@ def admin_change_own_password():
 # ROUTES DE TEST
 # ===========================================
 
-@app.route("/api/test", methods=["GET"])
-def test_api():
-    return jsonify({"status": "API OK", "message": "Backend fonctionne correctement"})
 
 # @app.route("/api/users-public", methods=["GET"])
 # def get_users_public():
@@ -3507,12 +4638,7 @@ def delete_offer_status(status_id):
         print(f"Erreur lors de la suppression du statut: {e}")
         return jsonify({"message": "Erreur serveur"}), 500
 
-# ===== ROUTE DE TEST =====
 
-@app.route('/api/test-new', methods=['GET'])
-def test_new_api():
-    """Test de connexion API pour les nouvelles routes"""
-    return jsonify({"message": "Nouvelles API fonctionnelles !"})
 
 # ===== GESTION DES ERREURS =====
 

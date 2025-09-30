@@ -1,0 +1,1501 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gestion Dynamique des Rôles et Permissions</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        padding: 20px;
+      }
+
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+        background: white;
+        border-radius: 15px;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+      }
+
+      .header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 30px;
+        text-align: center;
+      }
+
+      .header h1 {
+        font-size: 2.5rem;
+        margin-bottom: 10px;
+      }
+
+      .header p {
+        font-size: 1.1rem;
+        opacity: 0.9;
+      }
+
+      .main-content {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 30px;
+        padding: 30px;
+      }
+
+      .section {
+        background: #f8f9fa;
+        border-radius: 12px;
+        padding: 25px;
+        border: 1px solid #e9ecef;
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+      }
+
+      .section:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+      }
+
+      .section h3 {
+        color: #495057;
+        margin-bottom: 20px;
+        font-size: 1.4rem;
+        border-bottom: 2px solid #667eea;
+        padding-bottom: 10px;
+      }
+
+      .btn {
+        padding: 12px 24px;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 600;
+        transition: all 0.3s ease;
+        margin: 5px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .btn-primary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+      }
+
+      .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+      }
+
+      .btn-success {
+        background: linear-gradient(135deg, #56ab2f 0%, #a8e6cf 100%);
+        color: white;
+      }
+
+      .btn-danger {
+        background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%);
+        color: white;
+      }
+
+      .btn-warning {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        color: white;
+      }
+
+      .btn-info {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        color: white;
+      }
+
+      .card {
+        background: white;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 15px 0;
+        border: 1px solid #e9ecef;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+        transition: all 0.3s ease;
+      }
+
+      .card:hover {
+        box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1);
+      }
+
+      .role-color {
+        width: 25px;
+        height: 25px;
+        border-radius: 50%;
+        display: inline-block;
+        margin-right: 15px;
+        border: 2px solid white;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+      }
+
+      .permission-group {
+        margin: 20px 0;
+        padding: 20px;
+        background: white;
+        border-radius: 8px;
+        border-left: 4px solid #667eea;
+      }
+
+      .permission-group h4 {
+        color: #495057;
+        margin-bottom: 15px;
+        font-size: 1.1rem;
+      }
+
+      .permission-item {
+        display: flex;
+        align-items: center;
+        margin: 8px 0;
+        padding: 8px;
+        background: #f8f9fa;
+        border-radius: 5px;
+        transition: background 0.3s ease;
+      }
+
+      .permission-item:hover {
+        background: #e9ecef;
+      }
+
+      .permission-item input[type="checkbox"] {
+        margin-right: 12px;
+        transform: scale(1.2);
+      }
+
+      .permission-item label {
+        cursor: pointer;
+        flex: 1;
+        font-size: 14px;
+      }
+
+      .form-group {
+        margin: 15px 0;
+      }
+
+      .form-group label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 600;
+        color: #495057;
+      }
+
+      .form-group input,
+      .form-group select,
+      .form-group textarea {
+        width: 100%;
+        padding: 12px;
+        border: 2px solid #e9ecef;
+        border-radius: 8px;
+        font-size: 14px;
+        transition: border-color 0.3s ease;
+      }
+
+      .form-group input:focus,
+      .form-group select:focus,
+      .form-group textarea:focus {
+        outline: none;
+        border-color: #667eea;
+      }
+
+      .modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+        backdrop-filter: blur(5px);
+      }
+
+      .modal-content {
+        background-color: white;
+        margin: 5% auto;
+        padding: 30px;
+        border-radius: 15px;
+        width: 90%;
+        max-width: 600px;
+        max-height: 80vh;
+        overflow-y: auto;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+      }
+
+      .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 25px;
+        padding-bottom: 15px;
+        border-bottom: 2px solid #e9ecef;
+      }
+
+      .modal-header h2 {
+        color: #495057;
+        font-size: 1.8rem;
+      }
+
+      .close {
+        color: #aaa;
+        font-size: 28px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: color 0.3s ease;
+      }
+
+      .close:hover {
+        color: #000;
+      }
+
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+        margin: 20px 0;
+      }
+
+      .stat-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 20px;
+        border-radius: 10px;
+        text-align: center;
+      }
+
+      .stat-card h4 {
+        font-size: 2rem;
+        margin-bottom: 5px;
+      }
+
+      .stat-card p {
+        opacity: 0.9;
+      }
+
+      .loading {
+        display: none;
+        text-align: center;
+        padding: 20px;
+      }
+
+      .loading.show {
+        display: block;
+      }
+
+      .spinner {
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid #667eea;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 10px;
+      }
+
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+
+      .alert {
+        padding: 15px;
+        margin: 15px 0;
+        border-radius: 8px;
+        font-weight: 500;
+      }
+
+      .alert-success {
+        background-color: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+      }
+
+      .alert-danger {
+        background-color: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+      }
+
+      .alert-info {
+        background-color: #d1ecf1;
+        color: #0c5460;
+        border: 1px solid #bee5eb;
+      }
+
+      .user-card {
+        background: white;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 15px 0;
+        border: 1px solid #e9ecef;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+      }
+
+      .user-avatar {
+        width: 50px;
+        height: 50px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: bold;
+        font-size: 1.2rem;
+        margin-right: 15px;
+      }
+
+      .user-info {
+        display: flex;
+        align-items: center;
+        margin-bottom: 15px;
+      }
+
+      .user-details h4 {
+        margin-bottom: 5px;
+        color: #495057;
+      }
+
+      .user-details p {
+        color: #6c757d;
+        font-size: 0.9rem;
+      }
+
+      .role-selector {
+        width: 100%;
+        padding: 10px;
+        border: 2px solid #e9ecef;
+        border-radius: 8px;
+        font-size: 14px;
+      }
+
+      .permission-badge {
+        display: inline-block;
+        background: #e9ecef;
+        color: #495057;
+        padding: 4px 8px;
+        border-radius: 12px;
+        font-size: 12px;
+        margin: 2px;
+      }
+
+      .permission-badge.has-permission {
+        background: #d4edda;
+        color: #155724;
+      }
+
+      @media (max-width: 1200px) {
+        .main-content {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+
+      @media (max-width: 768px) {
+        .main-content {
+          grid-template-columns: 1fr;
+        }
+
+        .header h1 {
+          font-size: 2rem;
+        }
+
+        .stats {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>🔐 Gestion Dynamique des Rôles et Permissions</h1>
+        <p>Interface d'administration complète et sécurisée</p>
+
+        <!-- Section de connexion -->
+        <div id="login-section" style="margin-top: 20px">
+          <div
+            style="
+              display: flex;
+              gap: 10px;
+              justify-content: center;
+              align-items: center;
+            "
+          >
+            <input
+              type="email"
+              id="login-email"
+              placeholder="Email"
+              style="padding: 8px; border-radius: 5px; border: none"
+            />
+            <input
+              type="password"
+              id="login-password"
+              placeholder="Mot de passe"
+              style="padding: 8px; border-radius: 5px; border: none"
+            />
+            <button class="btn btn-success" onclick="loginUser()">
+              Se connecter
+            </button>
+          </div>
+          <div
+            id="login-status"
+            style="margin-top: 10px; text-align: center"
+          ></div>
+        </div>
+
+        <!-- Section utilisateur connecté -->
+        <div id="user-section" style="display: none; margin-top: 20px">
+          <div
+            style="
+              display: flex;
+              justify-content: center;
+              align-items: center;
+              gap: 15px;
+            "
+          >
+            <span id="user-info"
+              >Connecté en tant que: <strong id="user-name"></strong
+            ></span>
+            <button class="btn btn-danger" onclick="logoutUser()">
+              Déconnexion
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="main-content">
+        <!-- Section Rôles -->
+        <div class="section">
+          <h3>👥 Gestion des Rôles</h3>
+          <div class="loading" id="roles-loading">
+            <div class="spinner"></div>
+            <p>Chargement des rôles...</p>
+          </div>
+          <div id="roles-list"></div>
+          <button class="btn btn-primary" onclick="showCreateRoleModal()">
+            ➕ Créer un Rôle
+          </button>
+          <button class="btn btn-info" onclick="exportRoles()">
+            📤 Exporter
+          </button>
+          <button class="btn btn-warning" onclick="showImportModal()">
+            📥 Importer
+          </button>
+        </div>
+
+        <!-- Section Permissions -->
+        <div class="section">
+          <h3>🔑 Gestion des Permissions</h3>
+          <div class="loading" id="permissions-loading">
+            <div class="spinner"></div>
+            <p>Chargement des permissions...</p>
+          </div>
+          <div id="permissions-list"></div>
+          <button class="btn btn-primary" onclick="showCreatePermissionModal()">
+            ➕ Créer une Permission
+          </button>
+          <button class="btn btn-info" onclick="getPermissionCategories()">
+            📊 Catégories
+          </button>
+        </div>
+
+        <!-- Section Utilisateurs -->
+        <div class="section">
+          <h3>👤 Gestion des Utilisateurs</h3>
+          <div class="loading" id="users-loading">
+            <div class="spinner"></div>
+            <p>Chargement des utilisateurs...</p>
+          </div>
+          <div id="users-list"></div>
+          <button class="btn btn-primary" onclick="refreshUsers()">
+            🔄 Actualiser
+          </button>
+        </div>
+      </div>
+
+      <!-- Statistiques -->
+      <div class="stats" id="stats-section">
+        <div class="stat-card">
+          <h4 id="total-roles">0</h4>
+          <p>Rôles</p>
+        </div>
+        <div class="stat-card">
+          <h4 id="total-permissions">0</h4>
+          <p>Permissions</p>
+        </div>
+        <div class="stat-card">
+          <h4 id="total-users">0</h4>
+          <p>Utilisateurs</p>
+        </div>
+        <div class="stat-card">
+          <h4 id="total-categories">0</h4>
+          <p>Catégories</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Création de Rôle -->
+    <div id="createRoleModal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Créer un Nouveau Rôle</h2>
+          <span class="close" onclick="closeModal('createRoleModal')"
+            >&times;</span
+          >
+        </div>
+        <form id="createRoleForm">
+          <div class="form-group">
+            <label for="roleName">Nom du Rôle *</label>
+            <input
+              type="text"
+              id="roleName"
+              required
+              placeholder="Ex: moderateur"
+            />
+          </div>
+          <div class="form-group">
+            <label for="roleDescription">Description</label>
+            <textarea
+              id="roleDescription"
+              rows="3"
+              placeholder="Description du rôle"
+            ></textarea>
+          </div>
+          <div class="form-group">
+            <label for="roleColor">Couleur</label>
+            <input type="color" id="roleColor" value="#667eea" />
+          </div>
+          <div class="form-group">
+            <label for="roleOrder">Ordre</label>
+            <input type="number" id="roleOrder" value="1" min="1" />
+          </div>
+          <div class="form-group">
+            <label>Permissions</label>
+            <div id="permissions-checkboxes"></div>
+          </div>
+          <div style="text-align: right; margin-top: 20px">
+            <button
+              type="button"
+              class="btn btn-danger"
+              onclick="closeModal('createRoleModal')"
+            >
+              Annuler
+            </button>
+            <button type="submit" class="btn btn-success">Créer le Rôle</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal Création de Permission -->
+    <div id="createPermissionModal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Créer une Nouvelle Permission</h2>
+          <span class="close" onclick="closeModal('createPermissionModal')"
+            >&times;</span
+          >
+        </div>
+        <form id="createPermissionForm">
+          <div class="form-group">
+            <label for="permissionName">Nom de la Permission *</label>
+            <input
+              type="text"
+              id="permissionName"
+              required
+              placeholder="Ex: manage_products"
+            />
+          </div>
+          <div class="form-group">
+            <label for="permissionDescription">Description *</label>
+            <input
+              type="text"
+              id="permissionDescription"
+              required
+              placeholder="Ex: Gérer les produits"
+            />
+          </div>
+          <div class="form-group">
+            <label for="permissionCategory">Catégorie *</label>
+            <input
+              type="text"
+              id="permissionCategory"
+              required
+              placeholder="Ex: Produits"
+            />
+          </div>
+          <div style="text-align: right; margin-top: 20px">
+            <button
+              type="button"
+              class="btn btn-danger"
+              onclick="closeModal('createPermissionModal')"
+            >
+              Annuler
+            </button>
+            <button type="submit" class="btn btn-success">
+              Créer la Permission
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal Import -->
+    <div id="importModal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Importer des Rôles et Permissions</h2>
+          <span class="close" onclick="closeModal('importModal')">&times;</span>
+        </div>
+        <div class="form-group">
+          <label for="importFile">Fichier JSON</label>
+          <input type="file" id="importFile" accept=".json" />
+        </div>
+        <div class="form-group">
+          <label for="importText">Ou coller le JSON directement</label>
+          <textarea
+            id="importText"
+            rows="10"
+            placeholder='{"roles": [...], "permissions": [...]}'
+          ></textarea>
+        </div>
+        <div style="text-align: right; margin-top: 20px">
+          <button
+            type="button"
+            class="btn btn-danger"
+            onclick="closeModal('importModal')"
+          >
+            Annuler
+          </button>
+          <button type="button" class="btn btn-success" onclick="importData()">
+            Importer
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      class DynamicRoleManager {
+        constructor() {
+          this.baseURL = "http://127.0.0.1:8000"; // Port corrigé pour correspondre au serveur
+          this.token = localStorage.getItem("token");
+          this.roles = [];
+          this.permissions = [];
+          this.users = [];
+          this.categories = [];
+
+          if (!this.token) {
+            this.showAlert(
+              "Token d'authentification manquant. Veuillez vous connecter.",
+              "danger"
+            );
+            return;
+          }
+
+          this.init();
+        }
+
+        async init() {
+          try {
+            await Promise.all([
+              this.loadRoles(),
+              this.loadPermissions(),
+              this.loadUsers(),
+              this.getPermissionCategories(),
+            ]);
+            this.updateStats();
+          } catch (error) {
+            this.showAlert(
+              "Erreur lors du chargement initial: " + error.message,
+              "danger"
+            );
+          }
+        }
+
+        getHeaders() {
+          return {
+            Authorization: `Bearer ${this.token}`,
+            "Content-Type": "application/json",
+          };
+        }
+
+        async loadRoles() {
+          this.showLoading("roles-loading", true);
+          try {
+            const response = await fetch(`${this.baseURL}/api/roles`, {
+              headers: this.getHeaders(),
+            });
+
+            if (response.ok) {
+              const data = await response.json();
+              this.roles = data.data || [];
+              this.renderRoles();
+            } else {
+              throw new Error(
+                `Erreur ${response.status}: ${response.statusText}`
+              );
+            }
+          } catch (error) {
+            this.showAlert(
+              "Erreur lors du chargement des rôles: " + error.message,
+              "danger"
+            );
+          } finally {
+            this.showLoading("roles-loading", false);
+          }
+        }
+
+        async loadPermissions() {
+          this.showLoading("permissions-loading", true);
+          try {
+            const response = await fetch(`${this.baseURL}/api/permissions`, {
+              headers: this.getHeaders(),
+            });
+
+            if (response.ok) {
+              const data = await response.json();
+              this.permissions = data.data || [];
+              this.renderPermissions();
+            } else {
+              throw new Error(
+                `Erreur ${response.status}: ${response.statusText}`
+              );
+            }
+          } catch (error) {
+            this.showAlert(
+              "Erreur lors du chargement des permissions: " + error.message,
+              "danger"
+            );
+          } finally {
+            this.showLoading("permissions-loading", false);
+          }
+        }
+
+        async loadUsers() {
+          this.showLoading("users-loading", true);
+          try {
+            const response = await fetch(
+              `${this.baseURL}/api/users-with-roles`,
+              {
+                headers: this.getHeaders(),
+              }
+            );
+
+            if (response.ok) {
+              const data = await response.json();
+              this.users = data.data || [];
+              this.renderUsers();
+            } else {
+              throw new Error(
+                `Erreur ${response.status}: ${response.statusText}`
+              );
+            }
+          } catch (error) {
+            this.showAlert(
+              "Erreur lors du chargement des utilisateurs: " + error.message,
+              "danger"
+            );
+          } finally {
+            this.showLoading("users-loading", false);
+          }
+        }
+
+        async getPermissionCategories() {
+          try {
+            const response = await fetch(
+              `${this.baseURL}/api/permissions/categories`,
+              {
+                headers: this.getHeaders(),
+              }
+            );
+
+            if (response.ok) {
+              const data = await response.json();
+              this.categories = data.data || [];
+            }
+          } catch (error) {
+            console.error("Erreur lors du chargement des catégories:", error);
+          }
+        }
+
+        renderRoles() {
+          const container = document.getElementById("roles-list");
+          container.innerHTML = "";
+
+          this.roles.forEach((role) => {
+            const roleCard = document.createElement("div");
+            roleCard.className = "card";
+            roleCard.innerHTML = `
+                        <div style="display: flex; align-items: center; margin-bottom: 15px;">
+                            <span class="role-color" style="background-color: ${role.couleur}"></span>
+                            <div>
+                                <h4 style="margin: 0; color: #495057;">${role.nom}</h4>
+                                <p style="margin: 5px 0 0 0; color: #6c757d; font-size: 0.9rem;">${role.description}</p>
+                            </div>
+                        </div>
+                        <div style="margin-bottom: 15px;">
+                            <small style="color: #6c757d;">${role.permissions.length} permissions</small>
+                        </div>
+                        <div style="display: flex; gap: 10px;">
+                            <button class="btn btn-primary" onclick="editRole('${role._id}')">
+                                ✏️ Modifier
+                            </button>
+                            <button class="btn btn-danger" onclick="deleteRole('${role._id}')">
+                                🗑️ Supprimer
+                            </button>
+                        </div>
+                    `;
+            container.appendChild(roleCard);
+          });
+        }
+
+        renderPermissions() {
+          const container = document.getElementById("permissions-list");
+          container.innerHTML = "";
+
+          // Grouper par catégorie
+          const grouped = this.permissions.reduce((acc, perm) => {
+            if (!acc[perm.category]) acc[perm.category] = [];
+            acc[perm.category].push(perm);
+            return acc;
+          }, {});
+
+          Object.keys(grouped).forEach((category) => {
+            const groupDiv = document.createElement("div");
+            groupDiv.className = "permission-group";
+            groupDiv.innerHTML = `<h4>${category}</h4>`;
+
+            grouped[category].forEach((perm) => {
+              const permDiv = document.createElement("div");
+              permDiv.className = "permission-item";
+              permDiv.innerHTML = `
+                            <input type="checkbox" id="perm-${perm.nom}" value="${perm.nom}">
+                            <label for="perm-${perm.nom}">${perm.description}</label>
+                            <div style="margin-left: auto;">
+                                <button class="btn btn-danger" style="padding: 4px 8px; font-size: 12px;" 
+                                        onclick="deletePermission('${perm._id}')">
+                                    🗑️
+                                </button>
+                            </div>
+                        `;
+              groupDiv.appendChild(permDiv);
+            });
+
+            container.appendChild(groupDiv);
+          });
+        }
+
+        renderUsers() {
+          const container = document.getElementById("users-list");
+          container.innerHTML = "";
+
+          this.users.forEach((user) => {
+            const userCard = document.createElement("div");
+            userCard.className = "user-card";
+
+            const initials = user.name
+              .split(" ")
+              .map((n) => n[0])
+              .join("")
+              .toUpperCase();
+
+            userCard.innerHTML = `
+                        <div class="user-info">
+                            <div class="user-avatar">${initials}</div>
+                            <div class="user-details">
+                                <h4>${user.name}</h4>
+                                <p>${user.email}</p>
+                            </div>
+                        </div>
+                        <div style="margin-bottom: 15px;">
+                            <label>Rôle actuel:</label>
+                            <select class="role-selector" onchange="changeUserRole('${
+                              user._id
+                            }', this.value)">
+                                <option value="">Changer le rôle</option>
+                                ${this.roles
+                                  .map(
+                                    (role) =>
+                                      `<option value="${role.nom}" ${
+                                        user.role === role.nom ? "selected" : ""
+                                      }>${role.nom}</option>`
+                                  )
+                                  .join("")}
+                            </select>
+                        </div>
+                        <div>
+                            <small style="color: #6c757d;">${
+                              user.permissions.length
+                            } permissions</small>
+                        </div>
+                    `;
+            container.appendChild(userCard);
+          });
+        }
+
+        updateStats() {
+          document.getElementById("total-roles").textContent =
+            this.roles.length;
+          document.getElementById("total-permissions").textContent =
+            this.permissions.length;
+          document.getElementById("total-users").textContent =
+            this.users.length;
+          document.getElementById("total-categories").textContent =
+            this.categories.length;
+        }
+
+        async createRole(roleData) {
+          try {
+            const response = await fetch(`${this.baseURL}/api/roles`, {
+              method: "POST",
+              headers: this.getHeaders(),
+              body: JSON.stringify(roleData),
+            });
+
+            if (response.ok) {
+              this.showAlert("Rôle créé avec succès!", "success");
+              await this.loadRoles();
+              this.updateStats();
+              return true;
+            } else {
+              const error = await response.json();
+              throw new Error(error.message || "Erreur lors de la création");
+            }
+          } catch (error) {
+            this.showAlert(
+              "Erreur lors de la création du rôle: " + error.message,
+              "danger"
+            );
+            return false;
+          }
+        }
+
+        async createPermission(permissionData) {
+          try {
+            const response = await fetch(`${this.baseURL}/api/permissions`, {
+              method: "POST",
+              headers: this.getHeaders(),
+              body: JSON.stringify(permissionData),
+            });
+
+            if (response.ok) {
+              this.showAlert("Permission créée avec succès!", "success");
+              await this.loadPermissions();
+              await this.getPermissionCategories();
+              this.updateStats();
+              return true;
+            } else {
+              const error = await response.json();
+              throw new Error(error.message || "Erreur lors de la création");
+            }
+          } catch (error) {
+            this.showAlert(
+              "Erreur lors de la création de la permission: " + error.message,
+              "danger"
+            );
+            return false;
+          }
+        }
+
+        async deleteRole(roleId) {
+          if (!confirm("Êtes-vous sûr de vouloir supprimer ce rôle ?")) return;
+
+          try {
+            const response = await fetch(
+              `${this.baseURL}/api/roles/${roleId}`,
+              {
+                method: "DELETE",
+                headers: this.getHeaders(),
+              }
+            );
+
+            if (response.ok) {
+              this.showAlert("Rôle supprimé avec succès!", "success");
+              await this.loadRoles();
+              this.updateStats();
+            } else {
+              const error = await response.json();
+              throw new Error(error.message || "Erreur lors de la suppression");
+            }
+          } catch (error) {
+            this.showAlert(
+              "Erreur lors de la suppression du rôle: " + error.message,
+              "danger"
+            );
+          }
+        }
+
+        async deletePermission(permissionId) {
+          if (!confirm("Êtes-vous sûr de vouloir supprimer cette permission ?"))
+            return;
+
+          try {
+            const response = await fetch(
+              `${this.baseURL}/api/permissions/${permissionId}`,
+              {
+                method: "DELETE",
+                headers: this.getHeaders(),
+              }
+            );
+
+            if (response.ok) {
+              this.showAlert("Permission supprimée avec succès!", "success");
+              await this.loadPermissions();
+              await this.getPermissionCategories();
+              this.updateStats();
+            } else {
+              const error = await response.json();
+              throw new Error(error.message || "Erreur lors de la suppression");
+            }
+          } catch (error) {
+            this.showAlert(
+              "Erreur lors de la suppression de la permission: " +
+                error.message,
+              "danger"
+            );
+          }
+        }
+
+        async changeUserRole(userId, newRole) {
+          if (!newRole) return;
+
+          try {
+            const response = await fetch(
+              `${this.baseURL}/api/users/${userId}/assign-role`,
+              {
+                method: "POST",
+                headers: this.getHeaders(),
+                body: JSON.stringify({ role: newRole }),
+              }
+            );
+
+            if (response.ok) {
+              this.showAlert(
+                "Rôle utilisateur modifié avec succès!",
+                "success"
+              );
+              await this.loadUsers();
+            } else {
+              const error = await response.json();
+              throw new Error(
+                error.message || "Erreur lors du changement de rôle"
+              );
+            }
+          } catch (error) {
+            this.showAlert(
+              "Erreur lors du changement de rôle: " + error.message,
+              "danger"
+            );
+          }
+        }
+
+        async exportRoles() {
+          try {
+            const response = await fetch(`${this.baseURL}/api/roles/export`, {
+              headers: this.getHeaders(),
+            });
+
+            if (response.ok) {
+              const data = await response.json();
+              const blob = new Blob([JSON.stringify(data.data, null, 2)], {
+                type: "application/json",
+              });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `roles-permissions-${
+                new Date().toISOString().split("T")[0]
+              }.json`;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+              this.showAlert("Export réussi!", "success");
+            } else {
+              throw new Error("Erreur lors de l'export");
+            }
+          } catch (error) {
+            this.showAlert(
+              "Erreur lors de l'export: " + error.message,
+              "danger"
+            );
+          }
+        }
+
+        async importData() {
+          const fileInput = document.getElementById("importFile");
+          const textInput = document.getElementById("importText");
+
+          let importData;
+
+          if (fileInput.files.length > 0) {
+            const file = fileInput.files[0];
+            const text = await file.text();
+            importData = JSON.parse(text);
+          } else if (textInput.value.trim()) {
+            importData = JSON.parse(textInput.value);
+          } else {
+            this.showAlert(
+              "Veuillez sélectionner un fichier ou saisir du JSON",
+              "danger"
+            );
+            return;
+          }
+
+          try {
+            const response = await fetch(`${this.baseURL}/api/roles/import`, {
+              method: "POST",
+              headers: this.getHeaders(),
+              body: JSON.stringify(importData),
+            });
+
+            if (response.ok) {
+              const result = await response.json();
+              this.showAlert(
+                `Import réussi: ${result.imported_roles} rôles, ${result.imported_permissions} permissions`,
+                "success"
+              );
+              await this.init();
+              closeModal("importModal");
+            } else {
+              const error = await response.json();
+              throw new Error(error.message || "Erreur lors de l'import");
+            }
+          } catch (error) {
+            this.showAlert(
+              "Erreur lors de l'import: " + error.message,
+              "danger"
+            );
+          }
+        }
+
+        renderPermissionCheckboxes() {
+          const container = document.getElementById("permissions-checkboxes");
+          container.innerHTML = "";
+
+          // Grouper par catégorie
+          const grouped = this.permissions.reduce((acc, perm) => {
+            if (!acc[perm.category]) acc[perm.category] = [];
+            acc[perm.category].push(perm);
+            return acc;
+          }, {});
+
+          Object.keys(grouped).forEach((category) => {
+            const groupDiv = document.createElement("div");
+            groupDiv.innerHTML = `<h4 style="margin: 15px 0 10px 0; color: #495057;">${category}</h4>`;
+
+            grouped[category].forEach((perm) => {
+              const permDiv = document.createElement("div");
+              permDiv.innerHTML = `
+                            <input type="checkbox" name="permissions" value="${perm.nom}" id="new-perm-${perm.nom}">
+                            <label for="new-perm-${perm.nom}" style="margin-left: 8px;">${perm.description}</label>
+                        `;
+              groupDiv.appendChild(permDiv);
+            });
+
+            container.appendChild(groupDiv);
+          });
+        }
+
+        showLoading(elementId, show) {
+          const element = document.getElementById(elementId);
+          if (element) {
+            element.classList.toggle("show", show);
+          }
+        }
+
+        showAlert(message, type) {
+          const alertDiv = document.createElement("div");
+          alertDiv.className = `alert alert-${type}`;
+          alertDiv.textContent = message;
+
+          const container = document.querySelector(".container");
+          container.insertBefore(alertDiv, container.firstChild);
+
+          setTimeout(() => {
+            alertDiv.remove();
+          }, 5000);
+        }
+      }
+
+      // Initialiser le gestionnaire
+      let roleManager = null;
+
+      // Fonctions de connexion
+      async function loginUser() {
+        const email = document.getElementById("login-email").value;
+        const password = document.getElementById("login-password").value;
+        const statusDiv = document.getElementById("login-status");
+
+        if (!email || !password) {
+          statusDiv.innerHTML =
+            '<div class="alert alert-danger">Veuillez remplir tous les champs</div>';
+          return;
+        }
+
+        try {
+          const response = await fetch("http://127.0.0.1:8000/login", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ email, password }),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            localStorage.setItem("token", data.token);
+            localStorage.setItem("user", JSON.stringify(data));
+
+            // Masquer la section de connexion
+            document.getElementById("login-section").style.display = "none";
+
+            // Afficher la section utilisateur
+            document.getElementById("user-section").style.display = "block";
+            document.getElementById("user-name").textContent =
+              data.name || email;
+
+            // Initialiser le gestionnaire de rôles
+            roleManager = new DynamicRoleManager();
+
+            statusDiv.innerHTML =
+              '<div class="alert alert-success">Connexion réussie !</div>';
+          } else {
+            const error = await response.json();
+            statusDiv.innerHTML = `<div class="alert alert-danger">Erreur: ${error.message}</div>`;
+          }
+        } catch (error) {
+          statusDiv.innerHTML = `<div class="alert alert-danger">Erreur de connexion: ${error.message}</div>`;
+        }
+      }
+
+      function logoutUser() {
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+
+        // Masquer la section utilisateur
+        document.getElementById("user-section").style.display = "none";
+
+        // Afficher la section de connexion
+        document.getElementById("login-section").style.display = "block";
+
+        // Réinitialiser le gestionnaire
+        roleManager = null;
+
+        // Vider les listes
+        document.getElementById("roles-list").innerHTML = "";
+        document.getElementById("permissions-list").innerHTML = "";
+        document.getElementById("users-list").innerHTML = "";
+
+        // Réinitialiser les stats
+        document.getElementById("total-roles").textContent = "0";
+        document.getElementById("total-permissions").textContent = "0";
+        document.getElementById("total-users").textContent = "0";
+        document.getElementById("total-categories").textContent = "0";
+      }
+
+      // Vérifier si l'utilisateur est déjà connecté au chargement
+      window.addEventListener("load", function () {
+        const token = localStorage.getItem("token");
+        const user = localStorage.getItem("user");
+
+        if (token && user) {
+          // Masquer la section de connexion
+          document.getElementById("login-section").style.display = "none";
+
+          // Afficher la section utilisateur
+          document.getElementById("user-section").style.display = "block";
+          const userData = JSON.parse(user);
+          document.getElementById("user-name").textContent =
+            userData.name || userData.email;
+
+          // Initialiser le gestionnaire de rôles
+          roleManager = new DynamicRoleManager();
+        }
+      });
+
+      // Fonctions globales pour les modals
+      function showCreateRoleModal() {
+        if (!roleManager) {
+          alert("Veuillez vous connecter d'abord");
+          return;
+        }
+        document.getElementById("createRoleModal").style.display = "block";
+        roleManager.renderPermissionCheckboxes();
+      }
+
+      function showCreatePermissionModal() {
+        if (!roleManager) {
+          alert("Veuillez vous connecter d'abord");
+          return;
+        }
+        document.getElementById("createPermissionModal").style.display =
+          "block";
+      }
+
+      function showImportModal() {
+        if (!roleManager) {
+          alert("Veuillez vous connecter d'abord");
+          return;
+        }
+        document.getElementById("importModal").style.display = "block";
+      }
+
+      function closeModal(modalId) {
+        document.getElementById(modalId).style.display = "none";
+      }
+
+      function editRole(roleId) {
+        if (!roleManager) {
+          alert("Veuillez vous connecter d'abord");
+          return;
+        }
+        // Implémenter l'édition de rôle
+        alert("Fonction d'édition à implémenter pour le rôle: " + roleId);
+      }
+
+      function deleteRole(roleId) {
+        if (!roleManager) {
+          alert("Veuillez vous connecter d'abord");
+          return;
+        }
+        roleManager.deleteRole(roleId);
+      }
+
+      function deletePermission(permissionId) {
+        if (!roleManager) {
+          alert("Veuillez vous connecter d'abord");
+          return;
+        }
+        roleManager.deletePermission(permissionId);
+      }
+
+      function changeUserRole(userId, newRole) {
+        if (!roleManager) {
+          alert("Veuillez vous connecter d'abord");
+          return;
+        }
+        roleManager.changeUserRole(userId, newRole);
+      }
+
+      function exportRoles() {
+        if (!roleManager) {
+          alert("Veuillez vous connecter d'abord");
+          return;
+        }
+        roleManager.exportRoles();
+      }
+
+      function importData() {
+        if (!roleManager) {
+          alert("Veuillez vous connecter d'abord");
+          return;
+        }
+        roleManager.importData();
+      }
+
+      function refreshUsers() {
+        if (!roleManager) {
+          alert("Veuillez vous connecter d'abord");
+          return;
+        }
+        roleManager.loadUsers();
+      }
+
+      function getPermissionCategories() {
+        if (!roleManager) {
+          alert("Veuillez vous connecter d'abord");
+          return;
+        }
+        alert("Catégories disponibles: " + roleManager.categories.join(", "));
+      }
+
+      // Gestion des formulaires
+      document
+        .getElementById("createRoleForm")
+        .addEventListener("submit", async function (e) {
+          e.preventDefault();
+
+          if (!roleManager) {
+            alert("Veuillez vous connecter d'abord");
+            return;
+          }
+
+          const name = document.getElementById("roleName").value;
+          const description = document.getElementById("roleDescription").value;
+          const color = document.getElementById("roleColor").value;
+          const order = parseInt(document.getElementById("roleOrder").value);
+
+          const selectedPermissions = Array.from(
+            document.querySelectorAll('input[name="permissions"]:checked')
+          ).map((cb) => cb.value);
+
+          const roleData = {
+            nom: name,
+            description: description,
+            couleur: color,
+            ordre: order,
+            permissions: selectedPermissions,
+          };
+
+          const success = await roleManager.createRole(roleData);
+          if (success) {
+            closeModal("createRoleModal");
+            document.getElementById("createRoleForm").reset();
+          }
+        });
+
+      document
+        .getElementById("createPermissionForm")
+        .addEventListener("submit", async function (e) {
+          e.preventDefault();
+
+          if (!roleManager) {
+            alert("Veuillez vous connecter d'abord");
+            return;
+          }
+
+          const name = document.getElementById("permissionName").value;
+          const description = document.getElementById(
+            "permissionDescription"
+          ).value;
+          const category = document.getElementById("permissionCategory").value;
+
+          const permissionData = {
+            nom: name,
+            description: description,
+            category: category,
+          };
+
+          const success = await roleManager.createPermission(permissionData);
+          if (success) {
+            closeModal("createPermissionModal");
+            document.getElementById("createPermissionForm").reset();
+          }
+        });
+
+      // Fermer les modals en cliquant à l'extérieur
+      window.onclick = function (event) {
+        const modals = document.querySelectorAll(".modal");
+        modals.forEach((modal) => {
+          if (event.target === modal) {
+            modal.style.display = "none";
+          }
+        });
+      };
+    </script>
+  </body>
+</html>
