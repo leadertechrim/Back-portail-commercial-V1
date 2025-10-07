@@ -1592,10 +1592,11 @@ def login():
         return jsonify({"message": "Utilisateur non trouvé"}), 404
 
     if bcrypt.check_password_hash(user["password"], password):
+        # Token valide pour 30 jours (peut être changé selon vos besoins)
         token = jwt.encode({
             "user_id": str(user["_id"]),
             "role": user.get("role", "user"),
-            "exp": datetime.utcnow() + timedelta(days=7)
+            "exp": datetime.utcnow() + timedelta(days=30)  # 30 jours au lieu de 7
         }, app.config["SECRET_KEY"], algorithm="HS256")
         return jsonify({
             "token": token, 
