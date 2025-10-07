@@ -17,11 +17,12 @@ bcrypt = Bcrypt(app)
 
 # Configuration sécurisée
 app.config["SECRET_KEY"] = os.getenv("JWT_SECRET", "CHANGE_ME_IN_PRODUCTION")
+# MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+# MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
 MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://Emama:N8F7kSlWoJpZ0bIk@cluster0.1czao7m.mongodb.net/?retryWrites=true&w=majority")
-
 # MongoDB
 client = MongoClient(MONGO_URI)
-db = client.appels_doffres_db
+db = client.appels_doffres_db_copy
 sources_col = db.appels_doffres_sourcess  # Collection avec double 's' comme dans votre base
 users_col = db.users
 offres_col = db.offres
@@ -90,8 +91,9 @@ def user_has_permission(user, permission_name):
     if user.get('role') == 'admin':
         return True
     
-    # Récupérer les permissions du rôle depuis la base
-    role = roles_collection.find_one({'nom': user.get('role', 'spectateur')})
+    # Récupérer les permissions du rôle depuis la base - chercher par nom
+    user_role = user.get('role', 'spectateur')
+    role = roles_collection.find_one({'nom': user_role})
     if role:
         return permission_name in role.get('permissions', [])
     
@@ -102,7 +104,9 @@ def get_user_permissions(user):
     if user.get('role') == 'admin':
         return [p['nom'] for p in permissions_collection.find()]
     
-    role = roles_collection.find_one({'nom': user.get('role', 'spectateur')})
+    # Récupérer les permissions du rôle depuis la base - chercher par nom
+    user_role = user.get('role', 'spectateur')
+    role = roles_collection.find_one({'nom': user_role})
     if role:
         return role.get('permissions', [])
     
@@ -275,7 +279,7 @@ def get_role(current_user_id, role_id):
 
 @app.route("/api/roles", methods=["POST"])
 @token_required
-@admin_required
+@permission_required('roles_manage')
 def create_role(current_user_id):
     """Créer un rôle (admin seulement)"""
     try:
@@ -337,7 +341,7 @@ def create_role(current_user_id):
 
 @app.route("/api/roles/<role_id>", methods=["PUT"])
 @token_required
-@admin_required
+@permission_required('roles_manage')
 def update_role(current_user_id, role_id):
     """Modifier un rôle (admin seulement)"""
     try:
@@ -391,7 +395,7 @@ def update_role(current_user_id, role_id):
 
 @app.route("/api/roles/<role_id>", methods=["DELETE"])
 @token_required
-@admin_required
+@permission_required('roles_manage')
 def delete_role(current_user_id, role_id):
     """Supprimer un rôle (admin seulement)"""
     try:
@@ -403,8 +407,11 @@ def delete_role(current_user_id, role_id):
         if not role:
             return jsonify({'message': 'Rôle non trouvé'}), 404
         
-        # Vérifier si des utilisateurs utilisent ce rôle
-        users_with_role = users_col.count_documents({'role': role['nom']})
+        # Vérifier si des utilisateurs utilisent ce rôle (par nom, pas par code)
+        role_name = role.get('nom', role.get('code', ''))
+        users_with_role = users_col.count_documents({'role': role_name})
+        print(f"DEBUG: Vérification suppression rôle '{role_name}' - {users_with_role} utilisateurs")
+        
         if users_with_role > 0:
             return jsonify({
                 'message': f'Impossible de supprimer le rôle. {users_with_role} utilisateur(s) l\'utilisent encore'
@@ -432,6 +439,11 @@ def get_permissions(current_user_id):
     """Récupérer toutes les permissions"""
     try:
         permissions = list(permissions_collection.find().sort("category", 1))
+        print(f"Liste: Nombre de permissions trouvées: {len(permissions)}")
+        if permissions:
+            print(f"Debug: Premier élément de permission: {permissions[0]}")
+            print(f"Debug: Clés du premier élément: {list(permissions[0].keys())}")
+        
         for permission in permissions:
             permission['_id'] = str(permission['_id'])
         
@@ -440,6 +452,7 @@ def get_permissions(current_user_id):
             'data': permissions
         }), 200
     except Exception as e:
+        print(f"ERREUR: Erreur lors de la récupération des permissions: {str(e)}")
         return jsonify({
             'message': 'Erreur lors de la récupération des permissions',
             'error': str(e)
@@ -450,29 +463,50 @@ def get_permissions(current_user_id):
 def get_current_user_permissions(current_user_id):
     """Récupérer les permissions de l'utilisateur actuel"""
     try:
+        # Récupérer les informations de l'utilisateur depuis la base de données
         user = users_col.find_one({'_id': ObjectId(current_user_id)})
         if not user:
-            return jsonify({'message': 'Utilisateur non trouvé'}), 404
+            print(f"ERREUR: Utilisateur avec ID {current_user_id} non trouvé")
+            return jsonify({"message": "Utilisateur non trouvé"}), 404
         
-        permissions = get_user_permissions(user)
+        user_role = user.get("role")
+        print(f"Role utilisateur: {user_role}")
+        print(f"Role: User ID: {current_user_id}")
+        
+        # Debug: Vérifier tous les rôles dans la base
+        all_roles = list(roles_collection.find())
+        print(f"Debug: Tous les rôles dans la base: {[r.get('nom') for r in all_roles]}")
+        
+        # Trouver le rôle dans la base de données par nom (pas par code)
+        role_doc = roles_collection.find_one({"nom": user_role})
+        print(f"Recherche du role '{user_role}': {role_doc is not None}")
+        
+        if not role_doc:
+            print(f"Role {user_role} non trouve dans la base")
+            return jsonify({"message": "Role non trouve"}), 404
+            
+        # Retourner les permissions du rôle
+        permissions = role_doc.get("permissions", [])
+        
+        print(f"OK: Permissions pour {user_role}: {len(permissions)} permissions")
+        print(f"Liste: Premières permissions: {permissions[:3]}...")
         
         return jsonify({
-            'message': 'Permissions récupérées avec succès',
-            'data': {
-                'user_id': str(user['_id']),
-                'role': user.get('role', 'spectateur'),
-                'permissions': permissions
+            "message": "Permissions récupérées avec succès",
+            "data": {
+                "permissions": permissions,
+                "role": user_role,
+                "user_id": current_user_id
             }
-        }), 200
+        })
+        
     except Exception as e:
-        return jsonify({
-            'message': 'Erreur lors de la récupération des permissions',
-            'error': str(e)
-        }), 500
+        print(f"ERREUR: Erreur lors de la récupération des permissions: {e}")
+        return jsonify({"message": f"Erreur serveur: {str(e)}"}), 500
 
 @app.route("/api/users/<user_id>/permissions", methods=["GET"])
 @token_required
-@admin_required
+@permission_required('users_manage')
 def get_user_permissions_by_id(current_user_id, user_id):
     """Récupérer les permissions d'un utilisateur spécifique (admin seulement)"""
     try:
@@ -507,7 +541,7 @@ def get_user_permissions_by_id(current_user_id, user_id):
 
 @app.route("/api/users/<user_id>/assign-role", methods=["POST"])
 @token_required
-@admin_required
+@permission_required('users_manage')
 def assign_role_to_user(current_user_id, user_id):
     """Assigner un rôle à un utilisateur (admin seulement)"""
     try:
@@ -555,7 +589,7 @@ def assign_role_to_user(current_user_id, user_id):
 
 @app.route("/api/users/<user_id>/remove-role", methods=["POST"])
 @token_required
-@admin_required
+@permission_required('users_manage')
 def remove_role_from_user(current_user_id, user_id):
     """Retirer un rôle d'un utilisateur (admin seulement)"""
     try:
@@ -598,7 +632,7 @@ def remove_role_from_user(current_user_id, user_id):
 
 @app.route("/api/roles/init", methods=["POST"])
 @token_required
-@admin_required
+@permission_required('roles_manage')
 def init_roles_and_permissions(current_user_id):
     """Initialiser les rôles et permissions par défaut (admin seulement)"""
     try:
@@ -750,7 +784,7 @@ def test_permission(current_user_id, permission_name):
 
 @app.route("/api/users-with-roles", methods=["GET"])
 @token_required
-@admin_required
+@permission_required('users_manage')
 def get_users_with_roles(current_user_id):
     """Récupérer tous les utilisateurs avec leurs rôles (admin seulement)"""
     try:
@@ -777,7 +811,7 @@ def get_users_with_roles(current_user_id):
 
 @app.route("/api/permissions", methods=["POST"])
 @token_required
-@admin_required
+@permission_required('roles_manage')
 def create_permission(current_user_id):
     """Créer une nouvelle permission (admin seulement)"""
     try:
@@ -817,7 +851,7 @@ def create_permission(current_user_id):
 
 @app.route("/api/permissions/<permission_id>", methods=["PUT"])
 @token_required
-@admin_required
+@permission_required('roles_manage')
 def update_permission(current_user_id, permission_id):
     """Modifier une permission (admin seulement)"""
     try:
@@ -868,7 +902,7 @@ def update_permission(current_user_id, permission_id):
 
 @app.route("/api/permissions/<permission_id>", methods=["DELETE"])
 @token_required
-@admin_required
+@permission_required('roles_manage')
 def delete_permission(current_user_id, permission_id):
     """Supprimer une permission (admin seulement)"""
     try:
@@ -907,7 +941,7 @@ def delete_permission(current_user_id, permission_id):
 
 @app.route("/api/roles/<role_id>/permissions", methods=["POST"])
 @token_required
-@admin_required
+@permission_required('roles_manage')
 def add_permission_to_role(current_user_id, role_id):
     """Ajouter une permission à un rôle (admin seulement)"""
     try:
@@ -946,7 +980,7 @@ def add_permission_to_role(current_user_id, role_id):
 
 @app.route("/api/roles/<role_id>/permissions", methods=["DELETE"])
 @token_required
-@admin_required
+@permission_required('roles_manage')
 def remove_permission_from_role(current_user_id, role_id):
     """Retirer une permission d'un rôle (admin seulement)"""
     try:
@@ -979,7 +1013,7 @@ def remove_permission_from_role(current_user_id, role_id):
 
 @app.route("/api/roles/bulk-update", methods=["POST"])
 @token_required
-@admin_required
+@permission_required('roles_manage')
 def bulk_update_roles(current_user_id):
     """Mise à jour en lot des rôles (admin seulement)"""
     try:
@@ -1051,7 +1085,7 @@ def get_permission_categories(current_user_id):
 
 @app.route("/api/roles/export", methods=["GET"])
 @token_required
-@admin_required
+@permission_required('roles_manage')
 def export_roles_and_permissions(current_user_id):
     """Exporter tous les rôles et permissions (admin seulement)"""
     try:
@@ -1081,7 +1115,7 @@ def export_roles_and_permissions(current_user_id):
 
 @app.route("/api/roles/import", methods=["POST"])
 @token_required
-@admin_required
+@permission_required('roles_manage')
 def import_roles_and_permissions(current_user_id):
     """Importer des rôles et permissions (admin seulement)"""
     try:
@@ -1410,7 +1444,7 @@ def viewer_required(f):
             token = auth.split(" ")[1]
             decoded = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
             role = decoded.get("role")
-            if role not in ["admin", "user", "spectateur"]:
+            if role not in ["admin", "user", "spectateur", "TEST"]:
                 return jsonify({"message": "Accès refusé - Rôle insuffisant"}), 403
             request.current_user = decoded
         except:
@@ -1420,8 +1454,9 @@ def viewer_required(f):
     return decorated_function
 
 @app.route("/api/sources", methods=["GET"])
-@viewer_required
-def get_sources():
+@token_required
+@permission_required('sources_view')
+def get_sources(current_user_id):
     categorie = request.args.get("categorie")
     query = {}
     if categorie:
@@ -1465,8 +1500,9 @@ def recherche():
 
 
 @app.route("/api/sources/grouped", methods=["GET"])
-@viewer_required
-def get_sources_grouped():
+@token_required
+@permission_required('sources_view')
+def get_sources_grouped(current_user_id):
     def fetch_block(cat):
         docs = list(sources_col.find({"categorie": cat}).sort([("order", 1), ("nom_entite", 1)]))
         for d in docs:
@@ -1559,7 +1595,7 @@ def login():
         token = jwt.encode({
             "user_id": str(user["_id"]),
             "role": user.get("role", "user"),
-            "exp": datetime.utcnow() + timedelta(hours=6)
+            "exp": datetime.utcnow() + timedelta(days=7)
         }, app.config["SECRET_KEY"], algorithm="HS256")
         return jsonify({
             "token": token, 
@@ -1579,18 +1615,9 @@ def login():
 
 
 @app.route("/api/sources", methods=["POST"])
-def add_source():
-    auth = request.headers.get("Authorization")
-    if not auth:
-        return jsonify({"message": "Token manquant"}), 401
-    try:
-        token = auth.split(" ")[1]
-        decoded = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
-    except:
-        return jsonify({"message": "Token invalide"}), 401
-    if decoded.get("role") != "admin":
-        return jsonify({"message": "Accès refusé"}), 403
-
+@token_required
+@permission_required('sources_create')
+def add_source(current_user_id):
     data = request.get_json()
     if not all([data.get("nom_entite"), data.get("url"), data.get("categorie")]):
         return jsonify({"message": "Champs manquants"}), 400
@@ -1654,19 +1681,9 @@ def reorganize_orders_on_insert(categorie, new_order):
 
 # Route PUT complète avec vérification auth
 @app.route("/api/sources/<source_id>", methods=["PUT"])
-def update_source(source_id):
-    # Vérification auth
-    auth = request.headers.get("Authorization")
-    if not auth:
-        return jsonify({"message": "Token manquant"}), 401
-    try:
-        token = auth.split(" ")[1]
-        decoded = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
-    except:
-        return jsonify({"message": "Token invalide"}), 401
-    if decoded.get("role") != "admin":
-        return jsonify({"message": "Accès refusé"}), 403
-    
+@token_required
+@permission_required('sources_edit')
+def update_source(current_user_id, source_id):
     data = request.get_json()
     if not data:
         return jsonify({"message": "Données manquantes"}), 400
@@ -1740,18 +1757,9 @@ def update_source(source_id):
 #     return jsonify({"message": "Source mise à jour"}), 200
 
 @app.route("/api/sources/<source_id>", methods=["DELETE"])
-def delete_source(source_id):
-    auth = request.headers.get("Authorization")
-    if not auth:
-        return jsonify({"message": "Token manquant"}), 401
-    try:
-        token = auth.split(" ")[1]
-        decoded = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
-    except:
-        return jsonify({"message": "Token invalide"}), 401
-    if decoded.get("role") != "admin":
-        return jsonify({"message": "Accès refusé"}), 403
-
+@token_required
+@permission_required('sources_delete')
+def delete_source(current_user_id, source_id):
     sources_col.delete_one({"_id": ObjectId(source_id)})
     return jsonify({"message": "Source supprimée"}), 200
 
@@ -1795,9 +1803,10 @@ def optional_auth(f):
     return decorated_function
 
 @app.route("/api/users", methods=["GET"])
-@optional_auth
-def get_users():
-    """Récupérer tous les utilisateurs (avec authentification optionnelle pour Railway)"""
+@token_required
+@permission_required('users_manage')
+def get_users(current_user_id):
+    """Récupérer tous les utilisateurs"""
     try:
         # Vérifier la connexion à la base de données
         client.admin.command('ping')
@@ -1816,8 +1825,9 @@ def get_users():
         return jsonify({"message": f"Erreur lors de la récupération des utilisateurs: {str(e)}"}), 500
 
 @app.route("/api/users", methods=["POST"])
-@admin_required
-def create_user():
+@token_required
+@permission_required('users_manage')
+def create_user(current_user_id):
     """Créer un nouvel utilisateur (admin uniquement)"""
     data = request.get_json()
     if not data:
@@ -1889,8 +1899,9 @@ def create_user():
         return jsonify({"message": "Erreur lors de la création de l'utilisateur"}), 500
 
 @app.route("/api/users/<user_id>", methods=["GET"])
-@admin_required
-def get_user(user_id):
+@token_required
+@permission_required('users_manage')
+def get_user(current_user_id, user_id):
     """Récupérer un utilisateur spécifique (admin uniquement)"""
     try:
         user = users_col.find_one({"_id": ObjectId(user_id)}, {"password": 0})
@@ -1902,8 +1913,9 @@ def get_user(user_id):
         return jsonify({"message": f"Erreur lors de la récupération de l'utilisateur: {str(e)}"}), 500
         
 @app.route("/api/users/<user_id>/with-password", methods=["GET"])
-@admin_required
-def get_user_with_password(user_id):
+@token_required
+@permission_required('users_manage')
+def get_user_with_password(current_user_id, user_id):
     """Récupérer un utilisateur spécifique avec son mot de passe (admin uniquement)"""
     try:
         # Récupérer l'utilisateur AVEC le mot de passe
@@ -1920,8 +1932,9 @@ def get_user_with_password(user_id):
         return jsonify({"message": f"Erreur lors de la récupération de l'utilisateur: {str(e)}"}), 500
 
 @app.route("/api/users/<user_id>", methods=["PUT"])
-@admin_required
-def update_user(user_id):
+@token_required
+@permission_required('users_manage')
+def update_user(current_user_id, user_id):
     """Modifier un utilisateur (admin uniquement)"""
     try:
         data = request.get_json()
@@ -1993,8 +2006,9 @@ def update_user(user_id):
         return jsonify({"message": f"Erreur lors de la mise à jour de l'utilisateur: {str(e)}"}), 500
 
 @app.route("/api/users/<user_id>", methods=["DELETE"])
-@admin_required
-def delete_user(user_id):
+@token_required
+@permission_required('users_manage')
+def delete_user(current_user_id, user_id):
     """Supprimer un utilisateur (admin uniquement)"""
     try:
         # Vérifier que l'utilisateur existe
@@ -2039,8 +2053,9 @@ def get_user_stats():
         return jsonify({"message": f"Erreur lors de la récupération des statistiques: {str(e)}"}), 500
 
 @app.route("/api/users/<user_id>/change-password", methods=["POST"])
-@admin_required
-def change_user_password(user_id):
+@token_required
+@permission_required('users_manage')
+def change_user_password(current_user_id, user_id):
     """Changer le mot de passe d'un utilisateur (admin uniquement)"""
     data = request.get_json()
     if not data:
@@ -2078,8 +2093,9 @@ def change_user_password(user_id):
         return jsonify({"message": "Erreur lors du changement de mot de passe"}), 500
 
 @app.route("/api/admin/change-password", methods=["POST"])
-@admin_required
-def admin_change_own_password():
+@token_required
+@permission_required('users_manage')
+def admin_change_own_password(current_user_id):
     """Changer son propre mot de passe (admin uniquement)"""
     auth = request.headers.get("Authorization")
     if not auth:
@@ -2218,8 +2234,9 @@ def test_jwt():
 # ===========================================
 
 @app.route("/api/clients", methods=["GET"])
-@viewer_required
-def get_clients():
+@token_required
+@permission_required('clients_view')
+def get_clients(current_user_id):
     """Récupérer tous les clients"""
     try:
         clients = list(clients_col.find().sort("raison_sociale", 1))
@@ -2233,8 +2250,9 @@ def get_clients():
         return jsonify([]), 200
 
 @app.route("/api/clients", methods=["POST"])
-@admin_required
-def create_client():
+@token_required
+@permission_required('clients_create')
+def create_client(current_user_id):
     """Créer un nouveau client (admin uniquement)"""
     try:
         data = request.get_json()
@@ -2295,8 +2313,9 @@ def create_client():
         return jsonify({"message": f"Erreur lors de la création du client: {str(e)}"}), 500
 
 @app.route("/api/clients/<client_id>", methods=["GET"])
-@viewer_required
-def get_client(client_id):
+@token_required
+@permission_required('clients_view')
+def get_client(current_user_id, client_id):
     """Récupérer un client spécifique"""
     try:
         client = clients_col.find_one({"_id": ObjectId(client_id)})
@@ -2309,8 +2328,9 @@ def get_client(client_id):
         return jsonify({"message": f"Erreur lors de la récupération du client: {str(e)}"}), 500
 
 @app.route("/api/clients/<client_id>", methods=["PUT"])
-@admin_required
-def update_client(client_id):
+@token_required
+@permission_required('clients_edit')
+def update_client(current_user_id, client_id):
     """Modifier un client (admin uniquement)"""
     try:
         data = request.get_json()
@@ -2381,8 +2401,9 @@ def update_client(client_id):
         return jsonify({"message": f"Erreur lors de la mise à jour du client: {str(e)}"}), 500
 
 @app.route("/api/clients/<client_id>", methods=["DELETE"])
-@admin_required
-def delete_client(client_id):
+@token_required
+@permission_required('clients_delete')
+def delete_client(current_user_id, client_id):
     """Supprimer un client (admin uniquement)"""
     try:
         result = clients_col.delete_one({"_id": ObjectId(client_id)})
@@ -2400,8 +2421,9 @@ def delete_client(client_id):
 # ===========================================
 
 @app.route("/api/partenaires", methods=["GET"])
-@viewer_required
-def get_partenaires():
+@token_required
+@permission_required('partners_view')
+def get_partenaires(current_user_id):
     """Récupérer tous les partenaires"""
     try:
         partenaires = list(partenaires_col.find().sort("raison_sociale", 1))
@@ -2415,8 +2437,9 @@ def get_partenaires():
         return jsonify([]), 200
 
 @app.route("/api/partenaires", methods=["POST"])
-@admin_required
-def create_partenaire():
+@token_required
+@permission_required('partners_manage')
+def create_partenaire(current_user_id):
     """Créer un nouveau partenaire (admin uniquement)"""
     try:
         data = request.get_json()
@@ -2477,8 +2500,9 @@ def create_partenaire():
         return jsonify({"message": f"Erreur lors de la création du partenaire: {str(e)}"}), 500
 
 @app.route("/api/partenaires/<partenaire_id>", methods=["GET"])
-@viewer_required
-def get_partenaire(partenaire_id):
+@token_required
+@permission_required('partners_view')
+def get_partenaire(current_user_id, partenaire_id):
     """Récupérer un partenaire spécifique"""
     try:
         partenaire = partenaires_col.find_one({"_id": ObjectId(partenaire_id)})
@@ -2491,8 +2515,9 @@ def get_partenaire(partenaire_id):
         return jsonify({"message": f"Erreur lors de la récupération du partenaire: {str(e)}"}), 500
 
 @app.route("/api/partenaires/<partenaire_id>", methods=["PUT"])
-@admin_required
-def update_partenaire(partenaire_id):
+@token_required
+@permission_required('partners_manage')
+def update_partenaire(current_user_id, partenaire_id):
     """Modifier un partenaire (admin uniquement)"""
     try:
         data = request.get_json()
@@ -2563,8 +2588,9 @@ def update_partenaire(partenaire_id):
         return jsonify({"message": f"Erreur lors de la mise à jour du partenaire: {str(e)}"}), 500
 
 @app.route("/api/partenaires/<partenaire_id>", methods=["DELETE"])
-@admin_required
-def delete_partenaire(partenaire_id):
+@token_required
+@permission_required('partners_manage')
+def delete_partenaire(current_user_id, partenaire_id):
     """Supprimer un partenaire (admin uniquement)"""
     try:
         result = partenaires_col.delete_one({"_id": ObjectId(partenaire_id)})
@@ -2582,8 +2608,9 @@ def delete_partenaire(partenaire_id):
 # ===========================================
 
 @app.route("/api/personnels", methods=["GET"])
-@viewer_required
-def get_personnels():
+@token_required
+@permission_required('personnel_view')
+def get_personnels(current_user_id):
     """Récupérer tous les personnels"""
     try:
         personnels = list(personnels_col.find().sort("nom_prenom", 1))
@@ -2597,8 +2624,9 @@ def get_personnels():
         return jsonify([]), 200
 
 @app.route("/api/personnels", methods=["POST"])
-@admin_required
-def create_personnel():
+@token_required
+@permission_required('personnel_manage')
+def create_personnel(current_user_id):
     """Créer un nouveau personnel (admin uniquement)"""
     try:
         data = request.get_json()
@@ -2656,8 +2684,9 @@ def create_personnel():
         return jsonify({"message": f"Erreur lors de la création du personnel: {str(e)}"}), 500
 
 @app.route("/api/personnels/<personnel_id>", methods=["GET"])
-@viewer_required
-def get_personnel(personnel_id):
+@token_required
+@permission_required('personnel_view')
+def get_personnel(current_user_id, personnel_id):
     """Récupérer un personnel spécifique"""
     try:
         personnel = personnels_col.find_one({"_id": ObjectId(personnel_id)})
@@ -2670,8 +2699,9 @@ def get_personnel(personnel_id):
         return jsonify({"message": f"Erreur lors de la récupération du personnel: {str(e)}"}), 500
 
 @app.route("/api/personnels/<personnel_id>", methods=["PUT"])
-@admin_required
-def update_personnel(personnel_id):
+@token_required
+@permission_required('personnel_manage')
+def update_personnel(current_user_id, personnel_id):
     """Modifier un personnel (admin uniquement)"""
     try:
         data = request.get_json()
@@ -2737,8 +2767,9 @@ def update_personnel(personnel_id):
         return jsonify({"message": f"Erreur lors de la mise à jour du personnel: {str(e)}"}), 500
 
 @app.route("/api/personnels/<personnel_id>", methods=["DELETE"])
-@admin_required
-def delete_personnel(personnel_id):
+@token_required
+@permission_required('personnel_manage')
+def delete_personnel(current_user_id, personnel_id):
     """Supprimer un personnel (admin uniquement)"""
     try:
         result = personnels_col.delete_one({"_id": ObjectId(personnel_id)})
@@ -2798,21 +2829,40 @@ def debug_info():
 # ===========================================
 
 @app.route("/api/offres", methods=["GET"])
-@viewer_required
-def get_offres():
+@token_required
+@permission_required('devis_view')
+def get_offres(current_user_id):
     """Récupérer toutes les offres (admin voit tout, utilisateur voit ses offres)"""
     try:
-        # Récupérer l'utilisateur actuel
-        current_user = getattr(request, 'current_user', None)
-        user_id = current_user.get('user_id') if current_user else None
-        user_role = current_user.get('role') if current_user else None
+        # L'utilisateur actuel est déjà fourni par @token_required
+        user_id = current_user_id
         
-        # Construire la requête
+        # Récupérer le rôle depuis la base
+        user = users_col.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({"message": "Utilisateur non trouvé"}), 404
+        
+        user_role = user.get('role')
+        
+        # Construire la requête selon les permissions
         query = {}
-        # Tous les utilisateurs (user, admin, spectateur) voient toutes les offres
-        # Pas de filtrage par responsable_id
+        
+        # Vérifier les permissions pour le filtrage
+        if user_role == "user" or user_role == "spectateur":
+            # Les utilisateurs simples ne voient que leurs offres
+            if user_id:
+                query["responsable_id"] = ObjectId(user_id)
+            else:
+                # Si pas d'ID utilisateur, retourner une liste vide
+                return jsonify([]), 200
+        # Les admins voient toutes les offres (pas de filtrage)
+        
+        print(f"DEBUG: Récupération des offres - user_role: {user_role}, user_id: {user_id}")
+        print(f"DEBUG: Query utilisée: {query}")
         
         offres = list(offres_col.find(query).sort("updated_at", -1))
+        
+        print(f"DEBUG: Nombre d'offres trouvées: {len(offres)}")
         
         for offre in offres:
             offre["_id"] = str(offre["_id"])
@@ -2847,8 +2897,9 @@ def get_offres():
         return jsonify([]), 200
 
 @app.route("/api/offres", methods=["POST"])
-@viewer_required
-def add_offre():
+@token_required
+@permission_required('devis_create')
+def add_offre(current_user_id):
     """Ajouter une offre"""
     try:
         data = request.get_json()
@@ -2856,14 +2907,17 @@ def add_offre():
             return jsonify({"message": "Données manquantes"}), 400
         
         print(f"DEBUG: Données reçues pour création d'offre: {data}")
+        print(f"DEBUG: current_user_id depuis décorateur: {current_user_id}")
         
-        # Récupérer l'utilisateur actuel
-        current_user = getattr(request, 'current_user', None)
-        user_id = current_user.get('user_id') if current_user else None
-        user_role = current_user.get('role') if current_user else None
+        # L'utilisateur actuel est déjà fourni par @token_required
+        user_id = current_user_id
         
-        if not user_id:
-            return jsonify({"message": "Utilisateur non identifié"}), 401
+        # Récupérer le rôle depuis la base
+        user = users_col.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({"message": "Utilisateur non trouvé"}), 404
+        
+        user_role = user.get('role')
         
         # Vérifier les permissions de création
         if user_role == "spectateur":
@@ -2941,8 +2995,9 @@ def add_offre():
         return jsonify({"message": f"Erreur lors de la création de l'offre: {str(e)}"}), 500
 
 @app.route("/api/offres/<offre_id>", methods=["GET"])
-@viewer_required
-def get_offre(offre_id):
+@token_required
+@permission_required('devis_view')
+def get_offre(current_user_id, offre_id):
     """Récupérer une offre spécifique"""
     try:
         # Récupérer l'utilisateur actuel
@@ -2980,8 +3035,9 @@ def get_offre(offre_id):
         return jsonify({"message": f"Erreur lors de la récupération de l'offre: {str(e)}"}), 500
 
 @app.route("/api/offres/<offre_id>", methods=["PUT"])
-@viewer_required
-def update_offre(offre_id):
+@token_required
+@permission_required('devis_edit')
+def update_offre(current_user_id, offre_id):
     """Modifier une offre"""
     try:
         data = request.get_json()
@@ -3115,8 +3171,9 @@ def update_offre(offre_id):
         return jsonify({"message": f"Erreur lors de la mise à jour de l'offre: {str(e)}"}), 500
 
 @app.route("/api/offres/<offre_id>", methods=["DELETE"])
-@viewer_required
-def delete_offre(offre_id):
+@token_required
+@permission_required('devis_delete')
+def delete_offre(current_user_id, offre_id):
     """Supprimer une offre"""
     try:
         # Récupérer l'utilisateur actuel
@@ -3153,8 +3210,9 @@ def delete_offre(offre_id):
         return jsonify({"message": f"Erreur lors de la suppression de l'offre: {str(e)}"}), 500
 
 @app.route("/api/offres/stats", methods=["GET"])
-@viewer_required
-def get_offres_stats():
+@token_required
+@permission_required('devis_view')
+def get_offres_stats(current_user_id):
     """Statistiques des offres"""
     try:
         # Récupérer l'utilisateur actuel
@@ -3272,14 +3330,20 @@ def test_update_offre(offre_id):
 # ===========================================
 
 @app.route("/api/devis", methods=["GET"])
-@viewer_required
-def get_devis():
+@token_required
+@permission_required('devis_view')
+def get_devis(current_user_id):
     """Récupérer tous les devis (admin voit tout, utilisateur voit ses devis)"""
     try:
-        # Récupérer l'utilisateur actuel
-        current_user = getattr(request, 'current_user', None)
-        user_id = current_user.get('user_id') if current_user else None
-        user_role = current_user.get('role') if current_user else None
+        # L'utilisateur actuel est déjà fourni par @token_required
+        user_id = current_user_id
+        
+        # Récupérer le rôle depuis la base
+        user = users_col.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({"message": "Utilisateur non trouvé"}), 404
+        
+        user_role = user.get('role')
         
         # Construire la requête
         query = {}
@@ -3321,21 +3385,26 @@ def get_devis():
         return jsonify([]), 200
 
 @app.route("/api/devis", methods=["POST"])
-@viewer_required
-def create_devis():
+@token_required
+@permission_required('devis_create')
+def create_devis(current_user_id):
     """Créer un nouveau devis"""
     try:
         data = request.get_json()
         if not data:
             return jsonify({"message": "Données manquantes"}), 400
         
-        # Récupérer l'utilisateur actuel
-        current_user = getattr(request, 'current_user', None)
-        user_id = current_user.get('user_id') if current_user else None
-        user_role = current_user.get('role') if current_user else None
+        print(f"DEBUG: current_user_id depuis décorateur: {current_user_id}")
         
-        if not user_id:
-            return jsonify({"message": "Utilisateur non identifié"}), 401
+        # L'utilisateur actuel est déjà fourni par @token_required
+        user_id = current_user_id
+        
+        # Récupérer le rôle depuis la base
+        user = users_col.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({"message": "Utilisateur non trouvé"}), 404
+        
+        user_role = user.get('role')
         
         # Vérifier les permissions de création
         if user_role == "spectateur":
@@ -3414,8 +3483,9 @@ def create_devis():
         return jsonify({"message": f"Erreur lors de la création du devis: {str(e)}"}), 500
 
 @app.route("/api/devis/<devis_id>", methods=["GET"])
-@viewer_required
-def get_devis_by_id(devis_id):
+@token_required
+@permission_required('devis_view')
+def get_devis_by_id(current_user_id, devis_id):
     """Récupérer un devis spécifique"""
     try:
         # Récupérer l'utilisateur actuel
@@ -3453,8 +3523,9 @@ def get_devis_by_id(devis_id):
         return jsonify({"message": f"Erreur lors de la récupération du devis: {str(e)}"}), 500
 
 @app.route("/api/devis/<devis_id>", methods=["PUT"])
-@viewer_required
-def update_devis(devis_id):
+@token_required
+@permission_required('devis_edit')
+def update_devis(current_user_id, devis_id):
     """Modifier un devis"""
     try:
         data = request.get_json()
@@ -3524,8 +3595,9 @@ def update_devis(devis_id):
         return jsonify({"message": f"Erreur lors de la mise à jour du devis: {str(e)}"}), 500
 
 @app.route("/api/devis/<devis_id>", methods=["DELETE"])
-@viewer_required
-def delete_devis(devis_id):
+@token_required
+@permission_required('devis_delete')
+def delete_devis(current_user_id, devis_id):
     """Supprimer un devis"""
     try:
         # Récupérer l'utilisateur actuel
@@ -3558,14 +3630,20 @@ def delete_devis(devis_id):
 # ===========================================
 
 @app.route("/api/factures", methods=["GET"])
-@viewer_required
-def get_factures():
+@token_required
+@permission_required('factures_view')
+def get_factures(current_user_id):
     """Récupérer toutes les factures (admin voit tout, utilisateur voit ses factures)"""
     try:
-        # Récupérer l'utilisateur actuel
-        current_user = getattr(request, 'current_user', None)
-        user_id = current_user.get('user_id') if current_user else None
-        user_role = current_user.get('role') if current_user else None
+        # L'utilisateur actuel est déjà fourni par @token_required
+        user_id = current_user_id
+        
+        # Récupérer le rôle depuis la base
+        user = users_col.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({"message": "Utilisateur non trouvé"}), 404
+        
+        user_role = user.get('role')
         
         # Construire la requête
         query = {}
@@ -3607,21 +3685,26 @@ def get_factures():
         return jsonify([]), 200
 
 @app.route("/api/factures", methods=["POST"])
-@viewer_required
-def create_facture():
+@token_required
+@permission_required('factures_create')
+def create_facture(current_user_id):
     """Créer une nouvelle facture"""
     try:
         data = request.get_json()
         if not data:
             return jsonify({"message": "Données manquantes"}), 400
         
-        # Récupérer l'utilisateur actuel
-        current_user = getattr(request, 'current_user', None)
-        user_id = current_user.get('user_id') if current_user else None
-        user_role = current_user.get('role') if current_user else None
+        print(f"DEBUG: current_user_id depuis décorateur: {current_user_id}")
         
-        if not user_id:
-            return jsonify({"message": "Utilisateur non identifié"}), 401
+        # L'utilisateur actuel est déjà fourni par @token_required
+        user_id = current_user_id
+        
+        # Récupérer le rôle depuis la base
+        user = users_col.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({"message": "Utilisateur non trouvé"}), 404
+        
+        user_role = user.get('role')
         
         # Vérifier les permissions de création
         if user_role == "spectateur":
@@ -3702,8 +3785,9 @@ def create_facture():
         return jsonify({"message": f"Erreur lors de la création de la facture: {str(e)}"}), 500
 
 @app.route("/api/factures/<facture_id>", methods=["GET"])
-@viewer_required
-def get_facture_by_id(facture_id):
+@token_required
+@permission_required('factures_view')
+def get_facture_by_id(current_user_id, facture_id):
     """Récupérer une facture spécifique"""
     try:
         # Récupérer l'utilisateur actuel
@@ -3741,8 +3825,9 @@ def get_facture_by_id(facture_id):
         return jsonify({"message": f"Erreur lors de la récupération de la facture: {str(e)}"}), 500
 
 @app.route("/api/factures/<facture_id>", methods=["PUT"])
-@viewer_required
-def update_facture(facture_id):
+@token_required
+@permission_required('factures_edit')
+def update_facture(current_user_id, facture_id):
     """Modifier une facture"""
     try:
         data = request.get_json()
@@ -3814,8 +3899,9 @@ def update_facture(facture_id):
         return jsonify({"message": f"Erreur lors de la mise à jour de la facture: {str(e)}"}), 500
 
 @app.route("/api/factures/<facture_id>", methods=["DELETE"])
-@viewer_required
-def delete_facture(facture_id):
+@token_required
+@permission_required('factures_delete')
+def delete_facture(current_user_id, facture_id):
     """Supprimer une facture"""
     try:
         # Récupérer l'utilisateur actuel
@@ -3848,20 +3934,23 @@ def delete_facture(facture_id):
 # ===========================================
 
 @app.route("/api/devis/etats", methods=["GET"])
-@viewer_required
-def get_devis_etats():
+@token_required
+@permission_required('devis_view')
+def get_devis_etats(current_user_id):
     """Récupérer les états possibles pour les devis"""
     return jsonify(["Validé", "Transformé en facture"]), 200
 
 @app.route("/api/factures/etats", methods=["GET"])
-@viewer_required
-def get_factures_etats():
+@token_required
+@permission_required('factures_view')
+def get_factures_etats(current_user_id):
     """Récupérer les états possibles pour les factures"""
     return jsonify(["A envoyer au client", "En attente de payement", "Payée"]), 200
 
 @app.route("/api/devis/<devis_id>/transform-to-facture", methods=["POST"])
-@viewer_required
-def transform_devis_to_facture(devis_id):
+@token_required
+@permission_required('devis_edit')
+def transform_devis_to_facture(current_user_id, devis_id):
     """Transformer un devis en facture"""
     try:
         # Récupérer l'utilisateur actuel
@@ -4645,6 +4734,7 @@ def delete_offer_status(status_id):
 @app.errorhandler(404)
 def not_found(error):
     return jsonify({"message": "Endpoint non trouvé"}), 404
+
 
 @app.errorhandler(500)
 def internal_error(error):
