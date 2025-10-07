@@ -356,13 +356,24 @@ def update_role(current_user_id, role_id):
             return jsonify({'message': 'Rôle non trouvé'}), 404
         
         # Vérifier si le nom est déjà utilisé par un autre rôle
-        if 'nom' in data and data['nom'] != existing_role['nom']:
+        old_role_name = existing_role['nom']
+        new_role_name = data.get('nom', old_role_name)
+        
+        if new_role_name != old_role_name:
             duplicate_role = roles_collection.find_one({
-                'nom': data['nom'],
+                'nom': new_role_name,
                 '_id': {'$ne': ObjectId(role_id)}
             })
             if duplicate_role:
                 return jsonify({'message': 'Un rôle avec ce nom existe déjà'}), 400
+            
+            # ⭐ IMPORTANT : Mettre à jour tous les utilisateurs qui ont ce rôle
+            print(f"🔄 Renommage du rôle '{old_role_name}' → '{new_role_name}'")
+            result = users_col.update_many(
+                {'role': old_role_name},
+                {'$set': {'role': new_role_name}}
+            )
+            print(f"✅ {result.modified_count} utilisateur(s) mis à jour avec le nouveau nom de rôle")
         
         # Mettre à jour le rôle
         update_data = {
