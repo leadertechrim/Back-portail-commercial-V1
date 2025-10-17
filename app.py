@@ -8,6 +8,11 @@ import jwt
 from datetime import datetime, timedelta
 from bson.objectid import ObjectId
 from functools import wraps
+import threading
+import time
+from crypto_utils import encrypt_password, decrypt_password
+# from db import get_db
+
 
 app = Flask(__name__)
 
@@ -17,7 +22,6 @@ bcrypt = Bcrypt(app)
 
 # Configuration sécurisée
 app.config["SECRET_KEY"] = os.getenv("JWT_SECRET", "CHANGE_ME_IN_PRODUCTION")
-# MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
 # MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
 MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://Emama:N8F7kSlWoJpZ0bIk@cluster0.1czao7m.mongodb.net/?retryWrites=true&w=majority")
 # MongoDB
@@ -88,7 +92,8 @@ def permission_required(permission_name):
 def user_has_permission(user, permission_name):
     """Vérifie si un utilisateur a une permission spécifique"""
     # Les admins ont toutes les permissions
-    if user.get('role') == 'admin':
+    admin_roles = ['admin', 'Admin', 'SupAdmin', 'directeur', 'Superviseur']
+    if user.get('role') in admin_roles:
         return True
     
     # Récupérer les permissions du rôle depuis la base - chercher par nom
@@ -101,7 +106,9 @@ def user_has_permission(user, permission_name):
 
 def get_user_permissions(user):
     """Récupère toutes les permissions d'un utilisateur"""
-    if user.get('role') == 'admin':
+    # Les admins ont toutes les permissions
+    admin_roles = ['admin', 'Admin', 'SupAdmin', 'directeur', 'Superviseur']
+    if user.get('role') in admin_roles:
         return [p['nom'] for p in permissions_collection.find()]
     
     # Récupérer les permissions du rôle depuis la base - chercher par nom
@@ -120,7 +127,8 @@ def admin_required(f):
         if not user:
             return jsonify({'message': 'Utilisateur non trouvé'}), 404
         
-        if user.get('role') != 'admin':
+        admin_roles = ['admin', 'Admin', 'SupAdmin', 'directeur', 'Superviseur']
+        if user.get('role') not in admin_roles:
             return jsonify({'message': 'Accès administrateur requis'}), 403
         
         return f(current_user_id, *args, **kwargs)
@@ -279,7 +287,7 @@ def get_role(current_user_id, role_id):
 
 @app.route("/api/roles", methods=["POST"])
 @token_required
-@permission_required('roles_manage')
+@admin_required
 def create_role(current_user_id):
     """Créer un rôle (admin seulement)"""
     try:
@@ -341,7 +349,7 @@ def create_role(current_user_id):
 
 @app.route("/api/roles/<role_id>", methods=["PUT"])
 @token_required
-@permission_required('roles_manage')
+@admin_required
 def update_role(current_user_id, role_id):
     """Modifier un rôle (admin seulement)"""
     try:
@@ -356,24 +364,13 @@ def update_role(current_user_id, role_id):
             return jsonify({'message': 'Rôle non trouvé'}), 404
         
         # Vérifier si le nom est déjà utilisé par un autre rôle
-        old_role_name = existing_role['nom']
-        new_role_name = data.get('nom', old_role_name)
-        
-        if new_role_name != old_role_name:
+        if 'nom' in data and data['nom'] != existing_role['nom']:
             duplicate_role = roles_collection.find_one({
-                'nom': new_role_name,
+                'nom': data['nom'],
                 '_id': {'$ne': ObjectId(role_id)}
             })
             if duplicate_role:
                 return jsonify({'message': 'Un rôle avec ce nom existe déjà'}), 400
-            
-            # ⭐ IMPORTANT : Mettre à jour tous les utilisateurs qui ont ce rôle
-            print(f"🔄 Renommage du rôle '{old_role_name}' → '{new_role_name}'")
-            result = users_col.update_many(
-                {'role': old_role_name},
-                {'$set': {'role': new_role_name}}
-            )
-            print(f"✅ {result.modified_count} utilisateur(s) mis à jour avec le nouveau nom de rôle")
         
         # Mettre à jour le rôle
         update_data = {
@@ -406,7 +403,7 @@ def update_role(current_user_id, role_id):
 
 @app.route("/api/roles/<role_id>", methods=["DELETE"])
 @token_required
-@permission_required('roles_manage')
+@admin_required
 def delete_role(current_user_id, role_id):
     """Supprimer un rôle (admin seulement)"""
     try:
@@ -418,11 +415,8 @@ def delete_role(current_user_id, role_id):
         if not role:
             return jsonify({'message': 'Rôle non trouvé'}), 404
         
-        # Vérifier si des utilisateurs utilisent ce rôle (par nom, pas par code)
-        role_name = role.get('nom', role.get('code', ''))
-        users_with_role = users_col.count_documents({'role': role_name})
-        print(f"DEBUG: Vérification suppression rôle '{role_name}' - {users_with_role} utilisateurs")
-        
+        # Vérifier si des utilisateurs utilisent ce rôle
+        users_with_role = users_col.count_documents({'role': role['code']})
         if users_with_role > 0:
             return jsonify({
                 'message': f'Impossible de supprimer le rôle. {users_with_role} utilisateur(s) l\'utilisent encore'
@@ -517,7 +511,7 @@ def get_current_user_permissions(current_user_id):
 
 @app.route("/api/users/<user_id>/permissions", methods=["GET"])
 @token_required
-@permission_required('users_manage')
+@admin_required
 def get_user_permissions_by_id(current_user_id, user_id):
     """Récupérer les permissions d'un utilisateur spécifique (admin seulement)"""
     try:
@@ -552,7 +546,7 @@ def get_user_permissions_by_id(current_user_id, user_id):
 
 @app.route("/api/users/<user_id>/assign-role", methods=["POST"])
 @token_required
-@permission_required('users_manage')
+@admin_required
 def assign_role_to_user(current_user_id, user_id):
     """Assigner un rôle à un utilisateur (admin seulement)"""
     try:
@@ -600,7 +594,7 @@ def assign_role_to_user(current_user_id, user_id):
 
 @app.route("/api/users/<user_id>/remove-role", methods=["POST"])
 @token_required
-@permission_required('users_manage')
+@admin_required
 def remove_role_from_user(current_user_id, user_id):
     """Retirer un rôle d'un utilisateur (admin seulement)"""
     try:
@@ -643,7 +637,7 @@ def remove_role_from_user(current_user_id, user_id):
 
 @app.route("/api/roles/init", methods=["POST"])
 @token_required
-@permission_required('roles_manage')
+@admin_required
 def init_roles_and_permissions(current_user_id):
     """Initialiser les rôles et permissions par défaut (admin seulement)"""
     try:
@@ -795,7 +789,7 @@ def test_permission(current_user_id, permission_name):
 
 @app.route("/api/users-with-roles", methods=["GET"])
 @token_required
-@permission_required('users_manage')
+@admin_required
 def get_users_with_roles(current_user_id):
     """Récupérer tous les utilisateurs avec leurs rôles (admin seulement)"""
     try:
@@ -822,7 +816,7 @@ def get_users_with_roles(current_user_id):
 
 @app.route("/api/permissions", methods=["POST"])
 @token_required
-@permission_required('roles_manage')
+@admin_required
 def create_permission(current_user_id):
     """Créer une nouvelle permission (admin seulement)"""
     try:
@@ -862,7 +856,7 @@ def create_permission(current_user_id):
 
 @app.route("/api/permissions/<permission_id>", methods=["PUT"])
 @token_required
-@permission_required('roles_manage')
+@admin_required
 def update_permission(current_user_id, permission_id):
     """Modifier une permission (admin seulement)"""
     try:
@@ -913,7 +907,7 @@ def update_permission(current_user_id, permission_id):
 
 @app.route("/api/permissions/<permission_id>", methods=["DELETE"])
 @token_required
-@permission_required('roles_manage')
+@admin_required
 def delete_permission(current_user_id, permission_id):
     """Supprimer une permission (admin seulement)"""
     try:
@@ -952,7 +946,7 @@ def delete_permission(current_user_id, permission_id):
 
 @app.route("/api/roles/<role_id>/permissions", methods=["POST"])
 @token_required
-@permission_required('roles_manage')
+@admin_required
 def add_permission_to_role(current_user_id, role_id):
     """Ajouter une permission à un rôle (admin seulement)"""
     try:
@@ -991,7 +985,7 @@ def add_permission_to_role(current_user_id, role_id):
 
 @app.route("/api/roles/<role_id>/permissions", methods=["DELETE"])
 @token_required
-@permission_required('roles_manage')
+@admin_required
 def remove_permission_from_role(current_user_id, role_id):
     """Retirer une permission d'un rôle (admin seulement)"""
     try:
@@ -1024,7 +1018,7 @@ def remove_permission_from_role(current_user_id, role_id):
 
 @app.route("/api/roles/bulk-update", methods=["POST"])
 @token_required
-@permission_required('roles_manage')
+@admin_required
 def bulk_update_roles(current_user_id):
     """Mise à jour en lot des rôles (admin seulement)"""
     try:
@@ -1096,7 +1090,7 @@ def get_permission_categories(current_user_id):
 
 @app.route("/api/roles/export", methods=["GET"])
 @token_required
-@permission_required('roles_manage')
+@admin_required
 def export_roles_and_permissions(current_user_id):
     """Exporter tous les rôles et permissions (admin seulement)"""
     try:
@@ -1126,7 +1120,7 @@ def export_roles_and_permissions(current_user_id):
 
 @app.route("/api/roles/import", methods=["POST"])
 @token_required
-@permission_required('roles_manage')
+@admin_required
 def import_roles_and_permissions(current_user_id):
     """Importer des rôles et permissions (admin seulement)"""
     try:
@@ -1603,11 +1597,10 @@ def login():
         return jsonify({"message": "Utilisateur non trouvé"}), 404
 
     if bcrypt.check_password_hash(user["password"], password):
-        # Token valide pour 30 jours (peut être changé selon vos besoins)
         token = jwt.encode({
             "user_id": str(user["_id"]),
             "role": user.get("role", "user"),
-            "exp": datetime.utcnow() + timedelta(days=30)  # 30 jours au lieu de 7
+            "exp": datetime.utcnow() + timedelta(days=7)
         }, app.config["SECRET_KEY"], algorithm="HS256")
         return jsonify({
             "token": token, 
@@ -1883,14 +1876,16 @@ def create_user(current_user_id):
         return jsonify({"message": "Statut invalide"}), 400
     
     try:
-        # Hasher le mot de passe
+        # Hasher ET chiffrer le mot de passe
         hashed_password = bcrypt.generate_password_hash(data["password"]).decode("utf-8")
+        encrypted_password = encrypt_password(data["password"])  # 🆕 Chiffrement AES
         
         # Créer l'utilisateur
         user = {
             "name": data["name"],
             "email": data["email"],
             "password": hashed_password,
+            "password_encrypted": encrypted_password,  # 🆕 Mot de passe chiffré (réversible)
             "role": data["role"],
             "telephone": telephone,
             "whatsapp": whatsapp,
@@ -1924,24 +1919,43 @@ def get_user(current_user_id, user_id):
     except Exception as e:
         return jsonify({"message": f"Erreur lors de la récupération de l'utilisateur: {str(e)}"}), 500
         
-@app.route("/api/users/<user_id>/with-password", methods=["GET"])
+@app.route("/api/users/<user_id>/decrypt-password", methods=["GET"])
 @token_required
 @permission_required('users_manage')
-def get_user_with_password(current_user_id, user_id):
-    """Récupérer un utilisateur spécifique avec son mot de passe (admin uniquement)"""
+def get_user_decrypted_password(current_user_id, user_id):
+    """
+    Déchiffrer le mot de passe d'un utilisateur (admin uniquement)
+    ⚠️ ATTENTION : Ceci est une faille de sécurité volontaire
+    """
     try:
-        # Récupérer l'utilisateur AVEC le mot de passe
         user = users_col.find_one({"_id": ObjectId(user_id)})
         if not user:
             return jsonify({"message": "Utilisateur non trouvé"}), 404
         
-        # Convertir l'ObjectId en string
-        user["_id"] = str(user["_id"])
+        encrypted_password = user.get("password_encrypted", "")
         
-        # Retourner l'utilisateur avec le mot de passe
-        return jsonify(user), 200
+        if not encrypted_password:
+            return jsonify({
+                "message": "Mot de passe non disponible",
+                "password": "",
+                "note": "L'utilisateur a été créé avant la mise en place du chiffrement"
+            }), 200
+        
+        # Déchiffrer le mot de passe
+        decrypted_password = decrypt_password(encrypted_password)
+        
+        return jsonify({
+            "message": "Mot de passe déchiffré avec succès",
+            "password": decrypted_password,
+            "user_id": str(user["_id"]),
+            "user_email": user.get("email", "")
+        }), 200
+        
     except Exception as e:
-        return jsonify({"message": f"Erreur lors de la récupération de l'utilisateur: {str(e)}"}), 500
+        return jsonify({
+            "message": f"Erreur lors du déchiffrement: {str(e)}",
+            "password": ""
+        }), 500
 
 @app.route("/api/users/<user_id>", methods=["PUT"])
 @token_required
@@ -1979,9 +1993,11 @@ def update_user(current_user_id, user_id):
         if "password" in data and data["password"]:
             if not validate_password(data["password"]):
                 return jsonify({"message": "Mot de passe doit contenir au moins 6 caractères"}), 400
-            # Hacher le nouveau mot de passe
+            # Hacher ET chiffrer le nouveau mot de passe
             hashed_password = bcrypt.generate_password_hash(data["password"]).decode("utf-8")
+            encrypted_password = encrypt_password(data["password"])  # 🆕 Chiffrement AES
             update_data["password"] = hashed_password
+            update_data["password_encrypted"] = encrypted_password  # 🆕
         if "telephone" in data:
             if not validate_telephone(data["telephone"]):
                 return jsonify({"message": "Format de téléphone invalide"}), 400
@@ -2105,9 +2121,8 @@ def change_user_password(current_user_id, user_id):
         return jsonify({"message": "Erreur lors du changement de mot de passe"}), 500
 
 @app.route("/api/admin/change-password", methods=["POST"])
-@token_required
-@permission_required('users_manage')
-def admin_change_own_password(current_user_id):
+@admin_required
+def admin_change_own_password():
     """Changer son propre mot de passe (admin uniquement)"""
     auth = request.headers.get("Authorization")
     if not auth:
@@ -2846,15 +2861,10 @@ def debug_info():
 def get_offres(current_user_id):
     """Récupérer toutes les offres (admin voit tout, utilisateur voit ses offres)"""
     try:
-        # L'utilisateur actuel est déjà fourni par @token_required
-        user_id = current_user_id
-        
-        # Récupérer le rôle depuis la base
-        user = users_col.find_one({'_id': ObjectId(user_id)})
-        if not user:
-            return jsonify({"message": "Utilisateur non trouvé"}), 404
-        
-        user_role = user.get('role')
+        # Récupérer l'utilisateur actuel
+        current_user = getattr(request, 'current_user', None)
+        user_id = current_user.get('user_id') if current_user else None
+        user_role = current_user.get('role') if current_user else None
         
         # Construire la requête selon les permissions
         query = {}
@@ -2919,17 +2929,14 @@ def add_offre(current_user_id):
             return jsonify({"message": "Données manquantes"}), 400
         
         print(f"DEBUG: Données reçues pour création d'offre: {data}")
-        print(f"DEBUG: current_user_id depuis décorateur: {current_user_id}")
         
-        # L'utilisateur actuel est déjà fourni par @token_required
-        user_id = current_user_id
+        # Récupérer l'utilisateur actuel
+        current_user = getattr(request, 'current_user', None)
+        user_id = current_user.get('user_id') if current_user else None
+        user_role = current_user.get('role') if current_user else None
         
-        # Récupérer le rôle depuis la base
-        user = users_col.find_one({'_id': ObjectId(user_id)})
-        if not user:
-            return jsonify({"message": "Utilisateur non trouvé"}), 404
-        
-        user_role = user.get('role')
+        if not user_id:
+            return jsonify({"message": "Utilisateur non identifié"}), 401
         
         # Vérifier les permissions de création
         if user_role == "spectateur":
@@ -3347,15 +3354,10 @@ def test_update_offre(offre_id):
 def get_devis(current_user_id):
     """Récupérer tous les devis (admin voit tout, utilisateur voit ses devis)"""
     try:
-        # L'utilisateur actuel est déjà fourni par @token_required
-        user_id = current_user_id
-        
-        # Récupérer le rôle depuis la base
-        user = users_col.find_one({'_id': ObjectId(user_id)})
-        if not user:
-            return jsonify({"message": "Utilisateur non trouvé"}), 404
-        
-        user_role = user.get('role')
+        # Récupérer l'utilisateur actuel
+        current_user = getattr(request, 'current_user', None)
+        user_id = current_user.get('user_id') if current_user else None
+        user_role = current_user.get('role') if current_user else None
         
         # Construire la requête
         query = {}
@@ -3406,17 +3408,13 @@ def create_devis(current_user_id):
         if not data:
             return jsonify({"message": "Données manquantes"}), 400
         
-        print(f"DEBUG: current_user_id depuis décorateur: {current_user_id}")
+        # Récupérer l'utilisateur actuel
+        current_user = getattr(request, 'current_user', None)
+        user_id = current_user.get('user_id') if current_user else None
+        user_role = current_user.get('role') if current_user else None
         
-        # L'utilisateur actuel est déjà fourni par @token_required
-        user_id = current_user_id
-        
-        # Récupérer le rôle depuis la base
-        user = users_col.find_one({'_id': ObjectId(user_id)})
-        if not user:
-            return jsonify({"message": "Utilisateur non trouvé"}), 404
-        
-        user_role = user.get('role')
+        if not user_id:
+            return jsonify({"message": "Utilisateur non identifié"}), 401
         
         # Vérifier les permissions de création
         if user_role == "spectateur":
@@ -3647,15 +3645,10 @@ def delete_devis(current_user_id, devis_id):
 def get_factures(current_user_id):
     """Récupérer toutes les factures (admin voit tout, utilisateur voit ses factures)"""
     try:
-        # L'utilisateur actuel est déjà fourni par @token_required
-        user_id = current_user_id
-        
-        # Récupérer le rôle depuis la base
-        user = users_col.find_one({'_id': ObjectId(user_id)})
-        if not user:
-            return jsonify({"message": "Utilisateur non trouvé"}), 404
-        
-        user_role = user.get('role')
+        # Récupérer l'utilisateur actuel
+        current_user = getattr(request, 'current_user', None)
+        user_id = current_user.get('user_id') if current_user else None
+        user_role = current_user.get('role') if current_user else None
         
         # Construire la requête
         query = {}
@@ -3706,17 +3699,13 @@ def create_facture(current_user_id):
         if not data:
             return jsonify({"message": "Données manquantes"}), 400
         
-        print(f"DEBUG: current_user_id depuis décorateur: {current_user_id}")
+        # Récupérer l'utilisateur actuel
+        current_user = getattr(request, 'current_user', None)
+        user_id = current_user.get('user_id') if current_user else None
+        user_role = current_user.get('role') if current_user else None
         
-        # L'utilisateur actuel est déjà fourni par @token_required
-        user_id = current_user_id
-        
-        # Récupérer le rôle depuis la base
-        user = users_col.find_one({'_id': ObjectId(user_id)})
-        if not user:
-            return jsonify({"message": "Utilisateur non trouvé"}), 404
-        
-        user_role = user.get('role')
+        if not user_id:
+            return jsonify({"message": "Utilisateur non identifié"}), 401
         
         # Vérifier les permissions de création
         if user_role == "spectateur":
@@ -4752,18 +4741,96 @@ def not_found(error):
 def internal_error(error):
     return jsonify({"message": "Erreur serveur interne"}), 500
 
+
+# ============================================================
+# APPELS D'OFFRES IA - Intégration Module
+# ============================================================
+try:
+    from routes_offres_ia import register_offres_ia_routes
+    
+    # Utiliser la connexion MongoDB existante si disponible
+    try:
+        # Si vous avez déjà 'db' défini dans votre app
+        db_offres = db if 'db' in dir() else None
+    except:
+        # Sinon, créer une nouvelle connexion
+        from db import get_db
+        db_offres = get_db()
+    
+    if db_offres is not None:
+        register_offres_ia_routes(app, db_offres, token_required, permission_required)
+        print("✅ Module Appels d'Offres IA chargé avec succès")
+    else:
+        print("⚠️ Base de données non disponible pour module Offres IA")
+except Exception as e:
+    print(f"⚠️ Module Offres IA non chargé : {e}")
+    import traceback
+    traceback.print_exc()
+# ============================================================
+
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     debug = os.getenv("FLASK_DEBUG", "False").lower() == "true"
     app.run(debug=debug, host="0.0.0.0", port=port)
 
 
-# from bcrypt import hashpw, gensalt
+# =============================================================================
+# SCRAPING AUTOMATIQUE EN TEMPS RÉEL
+# =============================================================================
 
-# password = "admin123"  # mot de passe en clair
-# hashed = hashpw(password.encode('utf-8'), gensalt())
-# print(hashed.decode())  # tu obtiens la version cryptée à mettre dans MongoDB
+def background_scraper():
+    """
+    Scraping automatique en arrière-plan toutes les heures
+    Utilise scraper_smart_filter.py (double filtrage IA)
+    """
+    print("\n🤖 Thread de scraping automatique démarré")
+    print("⏰ Intervalle : Toutes les heures")
+    print("⚡ Scraper : scraper_instant_display.py (Affichage immédiat)")
+    print("📊 Phase 1 : Collecte rapide → Affichage instantané")
+    print("📊 Phase 2 : Analyse IA en background → Mise à jour progressive")
+    print("🗑️ Ignore la corbeille automatiquement\n")
+    
+    # Attendre 10 secondes que Flask démarre complètement
+    time.sleep(10)
+    
+    while True:
+        try:
+            print(f"\n{'='*70}")
+            print(f"🔄 [{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}] SCRAPING AUTOMATIQUE")
+            print(f"{'='*70}")
+            
+            # Importer et lancer le scraper avec affichage instantané
+            from scraper_instant_display import main as scraper_main
+            scraper_main()
+            
+            print(f"\n✅ Scraping terminé avec succès")
+            print(f"⏰ Prochain scraping dans 1 heure ({(datetime.now() + timedelta(hours=1)).strftime('%H:%M:%S')})")
+            print(f"{'='*70}\n")
+            
+        except Exception as e:
+            print(f"\n❌ Erreur scraping automatique : {e}")
+            print(f"⏰ Nouvelle tentative dans 1 heure")
+            import traceback
+            traceback.print_exc()
+        
+        # Attendre 1 heure (3600 secondes)
+        time.sleep(3600)
 
-# password_user = "user123"
-# hashed_user = hashpw(password_user.encode('utf-8'), gensalt())
-# print(hashed_user.decode())
+
+if __name__ == '__main__':
+    print("\n" + "="*70)
+    print(" "*15 + "🚀 DÉMARRAGE DU SERVEUR APLOFR")
+    print("="*70)
+    print("📡 Backend Flask API : http://127.0.0.1:8000")
+    print("🤖 Scraping automatique : ACTIVÉ (toutes les heures)")
+    print("🧠 Double filtrage IA : BERT + Modèle custom")
+    print("🗑️ Système corbeille : ACTIVÉ (liens ignorés)")
+    print("="*70 + "\n")
+    
+    # Lancer le thread de scraping automatique
+    scraper_thread = threading.Thread(target=background_scraper, daemon=True)
+    scraper_thread.start()
+    
+    # Lancer Flask (use_reloader=False pour éviter double thread)
+    app.run(debug=True, host='0.0.0.0', port=8000, use_reloader=False)
