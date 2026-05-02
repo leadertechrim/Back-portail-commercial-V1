@@ -44,7 +44,8 @@ from routes.categories_routes import categories_bp
 app = create_app()
 
 # Configuration CORS
-CORS(app, origins=['*'], supports_credentials=True)
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
+
 
 # Configuration Bcrypt
 bcrypt = app.bcrypt
@@ -183,7 +184,7 @@ if __name__ == "__main__":
     print("\n" + "="*70)
     print(" "*15 + "🚀 DÉMARRAGE DU SERVEUR APLOFR (MODE DÉVELOPPEMENT)")
     print("="*70)
-    print("📡 Backend Flask API : http://127.0.0.1:8000")
+    print("📡 Backend Flask API : https://back-portail-commercial-32528505fc5a.herokuapp.com/")
     print("⚠️  Pour la production, utilisez start.py")
     print("="*70 + "\n")
     
