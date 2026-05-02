@@ -1,18 +1,16 @@
 """
-Scraper INTELLIGENT avec double filtrage IA :
-1. BERT vérifie d'abord si c'est un APPEL D'OFFRES
-2. Modèle IA (local ou open source) vérifie ensuite si c'est INFORMATIQUE
-
-Cela évite d'analyser des liens inutiles (contact, à propos, etc.)
+Scraper INTELLIGENT avec OpenRouter AI :
+- Détection appels d'offres par mots-clés
+- Classification informatique par OpenRouter (100% précision)
+- Enregistrement dans appels_doffres_liens_new
 """
-import os
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
-from db import get_db
+from database import db, sources_col
 import re
 import io
-from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
+import os
 
 try:
     import PyPDF2
@@ -20,66 +18,33 @@ except:
     print("⚠️ PyPDF2 non installé")
     PyPDF2 = None
 
-# MongoDB
-db = get_db()
-sources_collection = db["appels_doffres_sources"]
-liens_collection = db["appels_doffres_liens"]
+# MongoDB - Utiliser les collections depuis database.py
+sources_collection = sources_col  # sources_col pointe déjà vers appels_doffres_sourcess
+liens_collection = db["appels_doffres_liens_new"]
 
-# 🔍 ÉTAPE 1 : Modèle pour détecter "Appel d'offres" (BERT général)
-print("🔍 Chargement du filtre BERT (détection appels d'offres)...")
-try:
-    filtre_appel_offres = pipeline(
-        "zero-shot-classification",
-        model="facebook/bart-large-mnli"
-    )
-    print("✅ Filtre appels d'offres chargé !")
-    USE_FILTRE = True
-except:
-    print("⚠️ Filtre non disponible, utilisation de mots-clés")
-    filtre_appel_offres = None
-    USE_FILTRE = False
+# Configuration OpenRouter
+USE_OPENROUTER = os.getenv('USE_OPENROUTER', 'true').lower() == 'true'
 
-# 💻 ÉTAPE 2 : Modèle pour détecter "Informatique"
-print("💻 Chargement du modèle IA (détection informatique)...")
-try:
-    # Essayer d'abord le modèle local s'il existe
-    model_path = "model_appel_offre_ai"
-    if os.path.exists(model_path):
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
-        model = AutoModelForSequenceClassification.from_pretrained(model_path)
-        classifier_info = pipeline("text-classification", model=model, tokenizer=tokenizer, device=-1)
-        print("✅ Modèle local informatique chargé !")
-        USE_LOCAL_MODEL = True
-        MODEL_TYPE = "local"
-    else:
-        raise FileNotFoundError("Modèle local non trouvé, utilisation du modèle open source")
-except Exception as e:
-    print(f"⚠️ Modèle local non disponible : {e}")
-    print("📦 Chargement du modèle open source (Zero-Shot Classification)...")
+print("="*70)
+print("🧠 SCRAPER AVEC OPENROUTER AI")
+print("="*70)
+print(f"🤖 OpenRouter activé: {USE_OPENROUTER}")
+
+if USE_OPENROUTER:
     try:
-        # Utiliser un modèle zero-shot multilingue plus performant
-        classifier_info = pipeline(
-            "zero-shot-classification",
-            model="facebook/bart-large-mnli",
-            device=-1
-        )
-        USE_LOCAL_MODEL = False
-        MODEL_TYPE = "zero-shot"
-        print("✅ Modèle open source chargé (zero-shot classification)")
-    except Exception as e2:
-        print(f"⚠️ Fallback vers modèle basique : {e2}")
-        classifier_info = pipeline("text-classification", model="bert-base-multilingual-cased")
-        USE_LOCAL_MODEL = False
-        MODEL_TYPE = "bert-basic"
+        from classifier_openrouter_optimized import analyser_avec_openrouter
+        print("✅ OpenRouter chargé avec succès")
+    except Exception as e:
+        print(f"⚠️ Erreur chargement OpenRouter: {e}")
+        USE_OPENROUTER = False
 
 
 def est_appel_offres(texte, url):
     """
     FILTRE 1 : Vérifie si c'est vraiment un appel d'offres
-    Utilise BERT zero-shot OU mots-clés
     """
     try:
-        # Filtrer par URL (liens évidents à ignorer)
+        # Filtrer par URL
         url_lower = url.lower()
         urls_a_ignorer = [
             '/contact', '/a-propos', '/about', '/mentions-legales',
@@ -92,16 +57,7 @@ def est_appel_offres(texte, url):
         if any(ignore in url_lower for ignore in urls_a_ignorer):
             return False, 0.0, "URL ignorée"
         
-        # BERT Zero-shot classification
-        if USE_FILTRE and filtre_appel_offres:
-            labels = ["appel d'offres", "page informative", "navigation"]
-            result = filtre_appel_offres(texte[:500], labels)
-            
-            # Si "appel d'offres" est le label principal avec score > 0.5
-            if result["labels"][0] == "appel d'offres" and result["scores"][0] > 0.5:
-                return True, result["scores"][0], "BERT"
-        
-        # Fallback : mots-clés
+        # Mots-clés appels d'offres
         mots_cles_ao = [
             "appel d'offres", "appel d offres", "marché public", "avis d'appel",
             "avis dappel", "consultation", "soumission", "offre technique",
@@ -120,79 +76,38 @@ def est_appel_offres(texte, url):
         return False, 0.0, "erreur"
 
 
-def est_informatique(texte):
+def est_informatique(texte, titre=""):
     """
-    FILTRE 2 : Vérifie si c'est informatique
-    Compatible avec modèle local, zero-shot ou mots-clés
+    FILTRE 2 : Vérifie si c'est informatique avec OpenRouter
     """
     try:
         if not texte or len(texte.strip()) < 50:
             return False, 0.0
         
-        # Mots-clés informatiques pour fallback ou renforcement
-        mots_cles_informatique = [
-            "informatique", "logiciel", "software", "matériel informatique", "hardware",
-            "réseau", "serveur", "base de données", "système d'information", "SI",
-            "développement", "application", "cloud", "cybersécurité", "sécurité informatique",
-            "ERP", "CRM", "infrastructure IT", "data center", "virtualisation",
-            "système informatique", "équipement informatique", "maintenance informatique",
-            "licence logiciel", "progiciel", "ordinateur", "PC", "serveur",
-            "stockage", "sauvegarde", "backup", "firewall", "pare-feu",
-            "wifi", "fibre optique", "câblage réseau", "switch", "routeur"
+        if USE_OPENROUTER:
+            # Utiliser OpenRouter
+            est_info, score = analyser_avec_openrouter(texte, titre)
+            if est_info is not None:
+                return est_info, score
+        
+        # Fallback : mots-clés si OpenRouter indisponible
+        mots_cles_info = [
+            "informatique", "logiciel", "software", "développement", "système d'information",
+            "base de données", "réseau", "serveur", "cloud", "cybersécurité",
+            "application", "web", "mobile", "api", "erp", "crm"
         ]
         
         texte_lower = texte.lower()
+        nb_matches = sum(1 for mot in mots_cles_info if mot in texte_lower)
         
-        # Si zero-shot classification
-        if MODEL_TYPE == "zero-shot":
-            labels = [
-                "informatique et technologies",
-                "travaux et construction",
-                "fournitures de bureau",
-                "services généraux"
-            ]
-            result = classifier_info(texte[:500], labels, multi_label=False)
-            
-            # Si "informatique" est le label principal avec un bon score
-            if result["labels"][0] == "informatique et technologies" and result["scores"][0] > 0.4:
-                # Double vérification avec mots-clés pour renforcer
-                nb_mots_cles = sum(1 for mot in mots_cles_informatique if mot in texte_lower)
-                if nb_mots_cles >= 1 or result["scores"][0] > 0.6:
-                    return True, result["scores"][0]
-            
-            # Fallback : si beaucoup de mots-clés même avec score faible
-            nb_mots_cles = sum(1 for mot in mots_cles_informatique if mot in texte_lower)
-            if nb_mots_cles >= 3:
-                return True, 0.75
-            
-            return False, result["scores"][0] if result["labels"][0] == "informatique et technologies" else 0.0
+        if nb_matches >= 2:
+            score = min(0.6 + (nb_matches * 0.1), 0.95)
+            return True, score
         
-        # Si modèle local
-        elif MODEL_TYPE == "local":
-            result = classifier_info(texte[:500])
-            label = result[0]["label"]
-            score = result[0]["score"]
-            
-            # Adapter selon votre modèle
-            est_info = label in ["LABEL_1", "informatique", "IT", "1"] and score > 0.6
-            
-            return est_info, score
+        return False, 0.0
         
-        # Si modèle basique (bert) - utiliser uniquement mots-clés
-        else:
-            nb_mots_cles = sum(1 for mot in mots_cles_informatique if mot in texte_lower)
-            if nb_mots_cles >= 2:
-                return True, min(0.7 + (nb_mots_cles * 0.05), 0.95)
-            
-            return False, 0.0
-    
     except Exception as e:
-        print(f"            ⚠️ Erreur classification informatique : {str(e)[:40]}")
-        # Fallback ultime : mots-clés
-        mots_cles_informatique = ["informatique", "logiciel", "software", "système d'information", "SI", "serveur", "réseau"]
-        nb_mots_cles = sum(1 for mot in mots_cles_informatique if mot in texte.lower())
-        if nb_mots_cles >= 2:
-            return True, 0.7
+        print(f"            ⚠️ Erreur classification IT : {str(e)[:40]}")
         return False, 0.0
 
 
@@ -229,7 +144,7 @@ def extraire_liens_de_source(url):
 
 
 def extraire_pdf_urls(soup, page_url):
-    """Extrait PDF (limité à 10 derniers)"""
+    """Extrait PDF (limité à 10)"""
     pdf_urls = []
     
     for a in soup.find_all("a", href=True):
@@ -239,14 +154,6 @@ def extraire_pdf_urls(soup, page_url):
                 "texte": a.get_text().strip() or "PDF"
             })
     
-    for iframe in soup.find_all("iframe"):
-        src = iframe.get("src", "")
-        if "docs.google.com/gview" in src:
-            match = re.search(r'url=(https?://[^&]+\.pdf)', src)
-            if match:
-                pdf_urls.append({"url": match.group(1), "texte": "PDF"})
-    
-    # 🆕 LIMITER à 10 derniers PDF (les plus récents)
     if len(pdf_urls) > 10:
         pdf_urls = pdf_urls[-10:]
     
@@ -273,9 +180,7 @@ def extraire_texte_pdf(pdf_url):
 
 def analyser_lien_intelligent(url, source_info):
     """
-    Analyse intelligente en 2 étapes :
-    1. Vérifie si c'est un appel d'offres
-    2. Si oui, vérifie si c'est informatique
+    Analyse intelligente en 2 étapes avec OpenRouter
     """
     try:
         response = requests.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
@@ -292,7 +197,7 @@ def analyser_lien_intelligent(url, source_info):
         meta_desc = soup.find("meta", {"name": "description"})
         description = meta_desc.get("content", "") if meta_desc else ""
         
-        # Texte préliminaire pour filtre
+        # Texte préliminaire
         texte_preliminaire = f"{titre} {contenu[:500]} {description}"
         
         # 🔍 ÉTAPE 1 : Vérifier si c'est un appel d'offres
@@ -303,52 +208,30 @@ def analyser_lien_intelligent(url, source_info):
             print(f"         ⏭️  Pas un appel d'offres ({methode})")
             return None
         
-        print(f"         ✅ Appel d'offres confirmé (score: {score_ao:.2%}, {methode})")
+        print(f"         ✅ Appel d'offres confirmé")
         
-        # Continuer l'analyse complète
         # PDF
         pdf_urls = extraire_pdf_urls(soup, url)
         contenu_pdf = ""
-        pdf_analyses = []
         
         if pdf_urls:
             print(f"         📄 {len(pdf_urls)} PDF trouvé(s)")
-            # Analyser les 5 premiers PDF max
-            for i, pdf in enumerate(pdf_urls[:5], 1):
+            for pdf in pdf_urls[:3]:  # Max 3 PDF
                 texte = extraire_texte_pdf(pdf["url"])
                 if texte:
                     contenu_pdf += " " + texte
-                    pdf_analyses.append({
-                        "url": pdf["url"],
-                        "texte": pdf["texte"],
-                        "contenu_extrait": True,
-                        "longueur": len(texte)
-                    })
-                else:
-                    pdf_analyses.append({
-                        "url": pdf["url"],
-                        "texte": pdf["texte"],
-                        "contenu_extrait": False
-                    })
         
         # Texte complet
         texte_complet = f"{titre} {contenu} {contenu_pdf} {description}"
         
-        # 💻 ÉTAPE 2 : Vérifier si c'est informatique
-        print(f"         💻 Analyse informatique...")
-        est_info, score_info = est_informatique(texte_complet)
+        # 💻 ÉTAPE 2 : Vérifier si c'est informatique (OpenRouter)
+        print(f"         🤖 Analyse OpenRouter...")
+        est_info, score_info = est_informatique(texte_complet, titre)
         
         if est_info:
             print(f"         🎯 INFORMATIQUE ! (score: {score_info:.2%})")
-            
-            # 🆕 Si informatique, garder seulement les 5 PDF les plus pertinents
-            if len(pdf_urls) > 5:
-                # Prioriser les PDF avec contenu extrait et pertinent
-                pdf_urls_pertinents = [p for p in pdf_analyses if p.get("contenu_extrait")]
-                if len(pdf_urls_pertinents) > 5:
-                    pdf_urls_pertinents = pdf_urls_pertinents[:5]
-                pdf_urls = pdf_urls_pertinents
-                print(f"         📄 {len(pdf_urls)} PDF sélectionnés (informatique)")
+        else:
+            print(f"         ⏭️  Non informatique (score: {score_info:.2%})")
         
         return {
             "titre": titre,
@@ -356,15 +239,14 @@ def analyser_lien_intelligent(url, source_info):
             "contenu_pdf": contenu_pdf[:1000],
             "description": description,
             "longueur_contenu": len(texte_complet),
-            "liens_pdf": pdf_urls if not est_info else pdf_urls[:5],  # Max 5 pour informatique
+            "liens_pdf": pdf_urls[:5],
             "nb_pdf": len(pdf_urls),
-            "nb_pdf_analyses": len([p for p in pdf_analyses if p.get("contenu_extrait")]),
             "est_appel_offres": est_ao,
             "appel_offres_score": score_ao,
             "appel_offres_methode": methode,
             "est_informatique_ia": est_info,
             "ia_score": score_info,
-            "ia_model": "local" if USE_LOCAL_MODEL else "bert",
+            "ia_model": "openrouter" if USE_OPENROUTER else "keywords",
             "source_entite": source_info.get("nom_entite", ""),
             "source_categorie": source_info.get("categorie", "")
         }
@@ -375,9 +257,9 @@ def analyser_lien_intelligent(url, source_info):
 
 
 def main():
-    """Scraper intelligent avec double filtrage"""
+    """Scraper intelligent avec OpenRouter"""
     print("\n" + "="*70)
-    print("🧠 SCRAPER INTELLIGENT - Double Filtrage IA")
+    print("🧠 SCRAPER AVEC OPENROUTER")
     print("="*70)
     
     sources = list(sources_collection.find({}))
@@ -409,28 +291,26 @@ def main():
         total_liens_trouves += len(liens_trouves)
         print(f"      ✅ {len(liens_trouves)} lien(s) trouvé(s)")
         
-        # 🆕 LIMITER à 100 DERNIERS LIENS (les plus récents)
+        # Limiter à 100 derniers liens
         if len(liens_trouves) > 100:
-            # Inverser pour avoir les derniers en premier (généralement les plus récents)
             liens_trouves = liens_trouves[-100:]
-            print(f"      ⚠️ Limitation à 100 derniers liens (source trop grande)")
+            print(f"      ⚠️ Limitation à 100 derniers liens")
         
         # Analyser chaque lien
         for idx_lien, lien_url in enumerate(liens_trouves, 1):
             print(f"\n      [{idx_lien}/{len(liens_trouves)}] ──────────────")
             print(f"      🔗 {lien_url[:55]}...")
             
-            # 🗑️ NOUVEAU : Vérifier si existe OU en corbeille
+            # Vérifier si existe
             lien_existant = liens_collection.find_one({"url": lien_url})
             if lien_existant:
-                # Si en corbeille, ignorer complètement (pas de réanalyse)
                 if lien_existant.get("en_corbeille") or lien_existant.get("ignore_rescrape"):
                     print(f"         🗑️  En corbeille - Ignoré")
                     continue
                 print(f"         ⏭️  Déjà dans la base")
                 continue
             
-            # Analyser avec filtrage intelligent
+            # Analyser
             data = analyser_lien_intelligent(lien_url, source)
             
             if not data:
@@ -453,19 +333,20 @@ def main():
                 "longueur_contenu": data["longueur_contenu"],
                 "liens_pdf": data["liens_pdf"],
                 "nb_pdf": data["nb_pdf"],
-                "nb_pdf_analyses": data.get("nb_pdf_analyses", 0),
                 "est_appel_offres": data["est_appel_offres"],
                 "appel_offres_score": data["appel_offres_score"],
                 "est_informatique_ia": data["est_informatique_ia"],
                 "ia_score": data["ia_score"],
-                "ia_model": MODEL_TYPE,
+                "ia_model": data["ia_model"],
                 "is_processed_by_model": True,
                 "analysis_result": {
                     "est_informatique_ia": data["est_informatique_ia"],
                     "score": data["ia_score"],
-                    "model": MODEL_TYPE,
+                    "model": data["ia_model"],
                     "date_analyse": datetime.now()
-                }
+                },
+                "en_corbeille": False,
+                "masque": False
             }
             
             liens_collection.insert_one(lien_doc)
@@ -478,7 +359,7 @@ def main():
     
     # Résumé
     print(f"\n{'='*70}")
-    print(f"✅ SCRAPING INTELLIGENT TERMINÉ")
+    print(f"✅ SCRAPING TERMINÉ")
     print(f"{'='*70}")
     print(f"📊 Statistiques :")
     print(f"   - Liens trouvés : {total_liens_trouves}")
@@ -486,7 +367,6 @@ def main():
     print(f"   - ✅ Appels d'offres : {total_appels_offres}")
     print(f"   - 🆕 Nouveaux ajoutés : {total_nouveaux}")
     print(f"   - 💻 Informatique : {total_informatique}")
-    print(f"\n💡 Efficacité du filtre : {(total_filtres_ao/total_liens_trouves*100):.1f}% de liens inutiles évités !" if total_liens_trouves > 0 else "")
 
 
 if __name__ == "__main__":

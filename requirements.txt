@@ -21,11 +21,12 @@ PyPDF2==3.0.1
 pdfplumber==0.11.0
 
 # IA et Machine Learning
-transformers>=4.46.0
-torch>=2.6.0
+# transformers>=4.46.0  # Désactivé pour Railway (utilise OpenRouter à la place)
+# torch>=2.6.0          # Désactivé pour Railway (trop lourd, build plus rapide)
 
 # Logging
 concurrent-log-handler==0.9.25
 
 # Tests (optionnel)
 pytest==8.3.3
+gunicorn==23.0.0
