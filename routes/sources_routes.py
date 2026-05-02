@@ -210,13 +210,24 @@ def add_source(current_user_id):
         }), 409
     
     # Réorganiser les ordres AVANT l'insertion
-    new_order = data.get("order", 1)
-    categorie = data.get("categorie")
-    if new_order and categorie:
-        reorganize_orders_on_insert(categorie, new_order)
-    
-    sources_col.insert_one(data)
-    return jsonify({"message": "Source ajoutée"}), 201
+    try:
+        new_order = int(data.get("order", 1))
+        categorie = data.get("categorie")
+        if categorie:
+            reorganize_orders_on_insert(categorie, new_order)
+        
+        # S'assurer que l'ordre est bien un entier dans les données insérées
+        data["order"] = new_order
+        
+        sources_col.insert_one(data)
+        return jsonify({"message": "Source ajoutée"}), 201
+    except Exception as e:
+        print(f"❌ Erreur lors de l'ajout de la source: {str(e)}")
+        return jsonify({
+            "message": "Erreur lors de l'ajout de la source",
+            "error": str(e)
+        }), 500
+
 
 
 @sources_bp.route("/api/sources/<source_id>", methods=["PUT"])
