@@ -356,8 +356,21 @@ def export_sources_docx(current_user_id):
     from docx.shared import Pt, RGBColor, Cm
     
     try:
-        # Récupérer toutes les sources triées
-        sources = list(sources_col.find({}).sort([("categorie", 1), ("order", 1), ("nom_entite", 1)]))
+        # 1. Récupérer TOUTES les sources
+        all_sources = list(sources_col.find({}))
+        
+        # 2. Tri numérique rigoureux en Python (pour correspondre au Frontend)
+        def get_sort_key(s):
+            cat = str(s.get("categorie", "Autre")).strip().capitalize()
+            order = 0
+            try:
+                order = int(s.get("order", 9999))
+            except:
+                order = 9999
+            nom = str(s.get("nom_entite", "")).lower()
+            return (cat, order, nom)
+        
+        all_sources.sort(key=get_sort_key)
         
         # Créer le document Word
         doc = Document()
@@ -366,48 +379,58 @@ def export_sources_docx(current_user_id):
         title = doc.add_heading("Liens des appels d'offres nationaux et internationaux.", 0)
         title.alignment = 1 # Centré
         
-        # Séparer par catégorie
-        categories = ["Nationale", "Internationale"]
+        # Déterminer les catégories présentes (nettoyées)
+        found_categories = sorted(list(set(str(s.get("categorie", "Autre")).strip() for s in all_sources)))
         
-        for cat in categories:
-            # Titre de section personnalisé
-            section_title = "Les appels d'offres nationaux" if cat == "Nationale" else "les appels d'offres internationaux"
-            doc.add_heading(section_title, level=1)
+        # On s'assure que Nationale et Internationale sont traitées en premier si elles existent
+        priority_cats = ["Nationale", "Internationale"]
+        other_cats = [c for c in found_categories if c not in priority_cats]
+        final_categories = [c for c in priority_cats if c in found_categories] + other_cats
+        
+        for cat_name in final_categories:
+            # Titre de section
+            if cat_name.lower() == "nationale":
+                display_title = "Les appels d'offres nationaux"
+            elif cat_name.lower() == "internationale":
+                display_title = "les appels d'offres internationaux"
+            else:
+                display_title = f"Appels d'offres - {cat_name}"
+                
+            doc.add_heading(display_title, level=1)
             
             # Créer un tableau
             table = doc.add_table(rows=1, cols=2)
             table.style = 'Table Grid'
-            table.autofit = False # Désactiver l'ajustement auto pour fixer les largeurs
+            table.autofit = False
             
-            # Définir la largeur des colonnes
-            # Largeur totale standard ~16cm (6cm pour le nom, 10cm pour l'URL)
+            # Largeur des colonnes (6cm / 10cm)
             table.columns[0].width = Cm(6.0)
             table.columns[1].width = Cm(10.0)
             
-            # En-tête du tableau
+            # En-tête
             hdr_cells = table.rows[0].cells
             hdr_cells[0].text = "Nom de l'Entité"
             hdr_cells[1].text = "URL / Lien"
             
-            # Style pour l'en-tête (Gras)
             for cell in hdr_cells:
                 for paragraph in cell.paragraphs:
                     for run in paragraph.runs:
                         run.bold = True
             
-            # Ajouter les données
-            cat_sources = [s for s in sources if s.get("categorie") == cat]
+            # Filtrer les sources pour cette catégorie
+            cat_sources = [s for s in all_sources if str(s.get("categorie", "")).strip() == cat_name]
             
             for s in cat_sources:
                 row_cells = table.add_row().cells
                 row_cells[0].width = Cm(6.0)
                 row_cells[1].width = Cm(10.0)
                 
-                row_cells[0].text = s.get("nom_entite", "Sans nom")
-                url = s.get("url", "Pas d'URL")
+                row_cells[0].text = str(s.get("nom_entite", "Sans nom"))
+                url = str(s.get("url", "Pas d'URL"))
                 row_cells[1].text = url
                 
             doc.add_paragraph("\n") # Espace
+
 
             
         # Sauvegarder dans un flux mémoire
