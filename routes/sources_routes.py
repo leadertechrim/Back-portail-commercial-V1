@@ -353,7 +353,7 @@ def delete_source(current_user_id, source_id):
 def export_sources_docx(current_user_id):
     """Exporter les sources en format Word (.docx)"""
     from docx import Document
-    from docx.shared import Pt, RGBColor
+    from docx.shared import Pt, RGBColor, Cm
     
     try:
         # Récupérer toutes les sources triées
@@ -363,26 +363,31 @@ def export_sources_docx(current_user_id):
         doc = Document()
         
         # Titre Principal
-        title = doc.add_heading('Liste des Sources d\'Appels d\'Offres', 0)
+        title = doc.add_heading("Liens des appels d'offres nationaux et internationaux.", 0)
         title.alignment = 1 # Centré
         
         # Séparer par catégorie
-        # On récupère les catégories uniques dynamiquement
-        categories = sources_col.distinct("categorie")
-        if not categories:
-            categories = ["Nationale", "Internationale"]
+        categories = ["Nationale", "Internationale"]
         
         for cat in categories:
-            doc.add_heading(f'Sources {cat}s', level=1)
+            # Titre de section personnalisé
+            section_title = "Les appels d'offres nationaux" if cat == "Nationale" else "les appels d'offres internationaux"
+            doc.add_heading(section_title, level=1)
             
             # Créer un tableau
             table = doc.add_table(rows=1, cols=2)
             table.style = 'Table Grid'
+            table.autofit = False # Désactiver l'ajustement auto pour fixer les largeurs
+            
+            # Définir la largeur des colonnes
+            # Largeur totale standard ~16cm (6cm pour le nom, 10cm pour l'URL)
+            table.columns[0].width = Cm(6.0)
+            table.columns[1].width = Cm(10.0)
             
             # En-tête du tableau
             hdr_cells = table.rows[0].cells
-            hdr_cells[0].text = 'Nom de l\'Entité'
-            hdr_cells[1].text = 'URL / Lien'
+            hdr_cells[0].text = "Nom de l'Entité"
+            hdr_cells[1].text = "URL / Lien"
             
             # Style pour l'en-tête (Gras)
             for cell in hdr_cells:
@@ -395,13 +400,15 @@ def export_sources_docx(current_user_id):
             
             for s in cat_sources:
                 row_cells = table.add_row().cells
-                row_cells[0].text = s.get("nom_entite", "Sans nom")
+                row_cells[0].width = Cm(6.0)
+                row_cells[1].width = Cm(10.0)
                 
-                # Lien cliquable (ou texte simple si URL invalide)
+                row_cells[0].text = s.get("nom_entite", "Sans nom")
                 url = s.get("url", "Pas d'URL")
                 row_cells[1].text = url
                 
             doc.add_paragraph("\n") # Espace
+
             
         # Sauvegarder dans un flux mémoire
         file_stream = io.BytesIO()
