@@ -1,9 +1,11 @@
 """Routes pour la gestion des sources d'appels d'offres"""
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, send_file
+import io
 from bson.objectid import ObjectId
 from database import sources_col
 from auth.decorators import token_required, permission_required
 from utils.error_handler import handle_server_error
+
 
 sources_bp = Blueprint('sources', __name__)
 
@@ -343,6 +345,80 @@ def delete_source(current_user_id, source_id):
     except Exception as e:
         message, status = handle_server_error(e, "suppression de la source")
         return jsonify(message), status
+
+
+@sources_bp.route("/api/sources/export-docx", methods=["GET"])
+@token_required
+@permission_required('sources_view')
+def export_sources_docx(current_user_id):
+    """Exporter les sources en format Word (.docx)"""
+    from docx import Document
+    from docx.shared import Pt, RGBColor
+    
+    try:
+        # Récupérer toutes les sources triées
+        sources = list(sources_col.find({}).sort([("categorie", 1), ("order", 1), ("nom_entite", 1)]))
+        
+        # Créer le document Word
+        doc = Document()
+        
+        # Titre Principal
+        title = doc.add_heading('Liste des Sources d\'Appels d\'Offres', 0)
+        title.alignment = 1 # Centré
+        
+        # Séparer par catégorie
+        # On récupère les catégories uniques dynamiquement
+        categories = sources_col.distinct("categorie")
+        if not categories:
+            categories = ["Nationale", "Internationale"]
+        
+        for cat in categories:
+            doc.add_heading(f'Sources {cat}s', level=1)
+            
+            # Créer un tableau
+            table = doc.add_table(rows=1, cols=2)
+            table.style = 'Table Grid'
+            
+            # En-tête du tableau
+            hdr_cells = table.rows[0].cells
+            hdr_cells[0].text = 'Nom de l\'Entité'
+            hdr_cells[1].text = 'URL / Lien'
+            
+            # Style pour l'en-tête (Gras)
+            for cell in hdr_cells:
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        run.bold = True
+            
+            # Ajouter les données
+            cat_sources = [s for s in sources if s.get("categorie") == cat]
+            
+            for s in cat_sources:
+                row_cells = table.add_row().cells
+                row_cells[0].text = s.get("nom_entite", "Sans nom")
+                
+                # Lien cliquable (ou texte simple si URL invalide)
+                url = s.get("url", "Pas d'URL")
+                row_cells[1].text = url
+                
+            doc.add_paragraph("\n") # Espace
+            
+        # Sauvegarder dans un flux mémoire
+        file_stream = io.BytesIO()
+        doc.save(file_stream)
+        file_stream.seek(0)
+        
+        return send_file(
+            file_stream,
+            mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            as_attachment=True,
+            download_name='Sources_Appels_Offres.docx'
+        )
+        
+    except Exception as e:
+        print(f"❌ Erreur export Word: {str(e)}")
+        return jsonify({"message": "Erreur lors de la génération du fichier Word", "error": str(e)}), 500
+
 
 
 
